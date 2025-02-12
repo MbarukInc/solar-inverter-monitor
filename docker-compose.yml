@@ -1,0 +1,19 @@
+version: "3.1"
+services:
+  monitor:
+    build:
+      context: monitor
+    restart: always
+    devices:
+      - "/dev/ttyUSB0:/dev/ttyUSB0"
+    environment:
+      USB_DEVICE: "/dev/ttyUSB0"
+      DB_HOST: influxdb.mbaruk.com
+      DB_PORT: 8086
+      DB_USERNAME: root
+      DB_PASSWORD: root
+      DB_NAME: ups
+      INVERTER_MODEL: "must-pv1800"
+    tmpfs:
+      - /var/run
+
