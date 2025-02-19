@@ -1,0 +1,24 @@
+name: Local Docker Deployment with Self-Hosted Runner
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    labels:
+      - mbarukville # Matches the label in the runner's environment variable
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Deploy updated container on Raspberry Pi
+      run: |
+        ssh -i pi@${{ env.RASPBERRY_PI_IP }} << EOF
+              cd ${{ env.SOLAR_APP_PATH }}
+              git pull origin main
+              # docker-compose build monitor
+              # docker-compose up -d monitor
+            EOF
