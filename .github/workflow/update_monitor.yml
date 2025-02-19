@@ -16,8 +16,8 @@ jobs:
 
     - name: Deploy updated container on Raspberry Pi
       run: |
-        ssh -i pi@${{ env.RASPBERRY_PI_IP }} << EOF
-              cd ${{ env.SOLAR_APP_PATH }}
+        ssh pi@${{ secrets.RASPBERRY_PI_IP }} << EOF
+              cd ${{ secrets.SOLAR_APP_PATH }}
               git pull origin main
               # docker-compose build monitor
               # docker-compose up -d monitor
