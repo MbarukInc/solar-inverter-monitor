@@ -14,13 +14,13 @@ jobs:
 
     - name: Copy code to Raspberry Pi
       run: |
-        rsync -avz --delete ./ pi@${{ secrets.RASPBERRY_PI_IP }}:${{ secrets.SOLAR_APP_PATH }}
+        rsync -avz ./ pi@${{ secrets.RASPBERRY_PI_IP }}:${{ secrets.SOLAR_APP_PATH }}
 
-    - name: Deploy updated container on Raspberry Pi
-      run: |
-        ssh pi@${{ secrets.RASPBERRY_PI_IP }} << 'EOF'
-          cd ${{ secrets.SOLAR_APP_PATH }}
-          # docker-compose build monitor
-          # docker-compose up -d monitor
-        EOF
-      shell: /usr/bin/bash -e {0}
+    # - name: Deploy updated container on Raspberry Pi
+    #   run: |
+    #     ssh pi@${{ secrets.RASPBERRY_PI_IP }} << 'EOF'
+    #       cd ${{ secrets.SOLAR_APP_PATH }}
+    #       # docker-compose build monitor
+    #       # docker-compose up -d monitor
+    #     EOF
+    #   shell: /usr/bin/bash -e {0}
