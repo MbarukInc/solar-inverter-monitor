@@ -6,9 +6,7 @@ from ups import UPS, must_pv1800 #must_ep3000,  must_ph18_5248
 
 
 SUPPORTED_INVERTERS = {
-    "must-pv1800": must_pv1800.MustPV1800,
-    "must-ep3000": must_ep3000.MustEP3000,
-    "must-ph18-5248": must_ph18_5248.MustPH185248
+    "must-pv1800": must_pv1800.MustPV1800
 }
 
 USB_DEVICE = os.environ.get("USB_DEVICE", "/dev/ttyUSB0")
