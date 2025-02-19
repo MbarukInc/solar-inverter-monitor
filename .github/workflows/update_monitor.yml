@@ -1,4 +1,4 @@
-name: Local Docker Deployment with Self-Hosted Runner
+name: Deploy_Latest_code
 
 on:
   push:
