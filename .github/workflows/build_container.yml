@@ -20,6 +20,6 @@ jobs:
           cd ${{ secrets.SOLAR_APP_PATH }}
           docker-compose build monitor
           docker-compose up -d monitor
-        EOF
+          EOF
       shell: /usr/bin/bash -e {0}
       
