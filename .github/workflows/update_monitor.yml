@@ -7,9 +7,7 @@ on:
 
 jobs:
   deploy:
-    runs-on: self-hosted
-    labels:
-      - mbarukville # Matches the label in the runner's environment variable
+    runs-on: [self-hosted, mbarukville] # Matches the label in the runner's environment variable
     steps:
     - name: Checkout repository
       uses: actions/checkout@v3
