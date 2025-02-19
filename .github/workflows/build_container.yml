@@ -1,4 +1,4 @@
-name: Manual_Deploy_Latest_code
+name: Build_Container
 
 on:
   workflow_dispatch:
