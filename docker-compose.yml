@@ -16,4 +16,6 @@ services:
       INVERTER_MODEL: "must-pv1800"
     tmpfs:
       - /var/run
+    volumes:
+      - ./monitor:/app  # Mount the local monitor directory to /app in the container
 
