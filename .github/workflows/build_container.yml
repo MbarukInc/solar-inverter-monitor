@@ -1,0 +1,25 @@
+name: Manual_Deploy_Latest_code
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, mbarukville] # Matches the label in the runner's environment variable
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Copy code to Raspberry Pi
+      run: |
+        rsync -avz --delete ./ pi@${{ secrets.RASPBERRY_PI_IP }}:${{ secrets.SOLAR_APP_PATH }}
+
+    - name: Deploy updated container on Raspberry Pi
+      run: |
+        ssh pi@${{ secrets.RASPBERRY_PI_IP }} << 'EOF'
+          cd ${{ secrets.SOLAR_APP_PATH }}
+          docker-compose build monitor
+          docker-compose up -d monitor
+        EOF
+      shell: /usr/bin/bash -e {0}
+      
