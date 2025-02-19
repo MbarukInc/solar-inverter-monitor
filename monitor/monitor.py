@@ -2,7 +2,7 @@ from influxdb import InfluxDBClient
 from influxdb_client.client.write_api import SYNCHRONOUS, ASYNCHRONOUS
 
 import os
-from ups import UPS, must_ep3000, must_pv1800, must_ph18_5248
+from ups import UPS, must_pv1800 #must_ep3000,  must_ph18_5248
 
 
 SUPPORTED_INVERTERS = {
