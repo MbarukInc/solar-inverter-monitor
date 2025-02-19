@@ -17,5 +17,5 @@ services:
     tmpfs:
       - /var/run
     volumes:
-      - ./monitor:/app  # Mount the local monitor directory to /app in the container
+      - ./monitor:/monitor  # Mount the local monitor directory to /monitor in the container
 
