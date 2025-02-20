@@ -44,6 +44,8 @@ class Sample(object):
     accloadpower: float
     # 25256: ["Accumulated self_use power low", 0.1, "kWh"],
     accselfusepower: float
+    # 25207: ["Grid voltage", 0.1, "V"],
+    gridvoltage: float
 
 
 class UPS(object):
