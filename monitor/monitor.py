@@ -57,8 +57,8 @@ json_body = [
             "accDischargerPower": sample.accdischargerpower,
             "accLoadPower": sample.accloadpower,
             "accSelfusePower": sample.accselfusepower,
-            "gridVoltage": sample.gridvoltage
-            "gridCurrent": sample.gridcurrent
+            "gridVoltage": sample.gridvoltage,
+            "gridCurrent": sample.gridcurrent,
             "gridPower": sample.gridpower
         }
     }
