@@ -46,7 +46,10 @@ class Sample(object):
     accselfusepower: float
     # 25207: ["Grid voltage", 0.1, "V"],
     gridvoltage: float
-
+    # 25214: ["Grid power(P)", 1, "W"],
+    gridpower: float
+    # 25211: ["Grid current", 0.1, "A"],
+    gridcurrent: float
 
 class UPS(object):
     def __init__(self, device_path: str, device_id: int, baud_rate: int):

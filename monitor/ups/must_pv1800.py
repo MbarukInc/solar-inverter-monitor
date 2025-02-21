@@ -137,6 +137,8 @@ class MustPV1800(UPS):
         accloadpower = soc_25200[54]/10
         accselfusepower = soc_25200[56]/10
         gridvoltage = soc_25200[7]/10
+        gridcurrent = soc_25200[11]/10
+        gridpower = soc_25200[14]
 
         return Sample(
             batVolts,
@@ -159,5 +161,7 @@ class MustPV1800(UPS):
             accdischargerpower,
             accloadpower,
             accselfusepower,
-            gridvoltage
+            gridvoltage,
+            gridpower,
+            gridcurrent
             )
