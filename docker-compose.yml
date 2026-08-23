@@ -1,21 +1,25 @@
-version: "3.1"
+# `version:` is obsolete under Compose v2 and only produces a warning.
 services:
   monitor:
     build:
       context: monitor
     restart: always
     devices:
-      - "/dev/ttyUSB0:/dev/ttyUSB0"
+      - "${USB_DEVICE:-/dev/ttyUSB0}:/dev/ttyUSB0"
     environment:
       USB_DEVICE: "/dev/ttyUSB0"
-      DB_HOST: influxdb.mbaruk.com
-      DB_PORT: 8086
-      DB_USERNAME: root
-      DB_PASSWORD: root
-      DB_NAME: ups
+      DB_HOST: "${DB_HOST:?set DB_HOST in .env}"
+      DB_PORT: "${DB_PORT:-8086}"
+      DB_USERNAME: "${DB_USERNAME:?set DB_USERNAME in .env}"
+      DB_PASSWORD: "${DB_PASSWORD:?set DB_PASSWORD in .env}"
+      DB_NAME: "${DB_NAME:-ups}"
       INVERTER_MODEL: "must-pv1800"
-    tmpfs:
-      - /var/run
-    volumes:
-      - ./monitor:/monitor  # Mount the local monitor directory to /monitor in the container
-
+      SAMPLE_INTERVAL: "${SAMPLE_INTERVAL:-30}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+    # The daemon logs a line per sample. Without rotation that grows without
+    # bound on the SD card.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

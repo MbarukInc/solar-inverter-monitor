@@ -10,17 +10,39 @@ jobs:
     runs-on: [self-hosted, mbarukville] # Matches the label in the runner's environment variable
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
+    # Secrets go through env rather than straight into the script body, so a
+    # value containing shell metacharacters cannot alter the command.
     - name: Copy code to Raspberry Pi
+      env:
+        PI: ${{ secrets.RASPBERRY_PI_IP }}
+        APP_PATH: ${{ secrets.SOLAR_APP_PATH }}
       run: |
-        rsync -avz ./ pi@${{ secrets.RASPBERRY_PI_IP }}:${{ secrets.SOLAR_APP_PATH }}
+        rsync -avz \
+          --exclude '.git/' \
+          --exclude '.github/' \
+          --exclude '.env' \
+          --exclude '.DS_Store' \
+          ./ "pi@$PI:$APP_PATH/"
 
-    # - name: Deploy updated container on Raspberry Pi
-    #   run: |
-    #     ssh pi@${{ secrets.RASPBERRY_PI_IP }} << 'EOF'
-    #       cd ${{ secrets.SOLAR_APP_PATH }}
-    #       # docker-compose build monitor
-    #       # docker-compose up -d monitor
-    #     EOF
-    #   shell: /usr/bin/bash -e {0}
+    # The container no longer bind-mounts the source, so a code change only
+    # takes effect once the image is rebuilt. Under the old cron + bind-mount
+    # arrangement an rsync alone was enough, which is why this step used to be
+    # commented out.
+    - name: Rebuild and restart monitor
+      env:
+        PI: ${{ secrets.RASPBERRY_PI_IP }}
+        APP_PATH: ${{ secrets.SOLAR_APP_PATH }}
+      run: |
+        ssh "pi@$PI" 'bash -s' -- "$APP_PATH" <<'REMOTE'
+        set -euo pipefail
+        cd "$1"
+        if docker compose version >/dev/null 2>&1; then
+          DC="docker compose"
+        else
+          DC="docker-compose"
+        fi
+        $DC up -d --build monitor
+        $DC ps monitor
+        REMOTE

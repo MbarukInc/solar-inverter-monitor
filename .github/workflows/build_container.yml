@@ -8,18 +8,40 @@ jobs:
     runs-on: [self-hosted, mbarukville] # Matches the label in the runner's environment variable
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
+    # --delete was removed here to match Deploy_Latest_code. It would wipe
+    # anything on the Pi that is not in the repo -- including the new .env
+    # holding the InfluxDB credentials.
     - name: Copy code to Raspberry Pi
+      env:
+        PI: ${{ secrets.RASPBERRY_PI_IP }}
+        APP_PATH: ${{ secrets.SOLAR_APP_PATH }}
       run: |
-        rsync -avz --delete ./ pi@${{ secrets.RASPBERRY_PI_IP }}:${{ secrets.SOLAR_APP_PATH }}
+        rsync -avz \
+          --exclude '.git/' \
+          --exclude '.github/' \
+          --exclude '.env' \
+          --exclude '.DS_Store' \
+          ./ "pi@$PI:$APP_PATH/"
 
+    # The old version of this step had its heredoc terminator indented one
+    # space past the block indent, so `<< 'EOF'` never closed: the remote shell
+    # received ` EOF` and the stray `shell:` line as commands and the step
+    # exited non-zero even when the deploy had worked.
     - name: Deploy updated container on Raspberry Pi
+      env:
+        PI: ${{ secrets.RASPBERRY_PI_IP }}
+        APP_PATH: ${{ secrets.SOLAR_APP_PATH }}
       run: |
-        ssh pi@${{ secrets.RASPBERRY_PI_IP }} << 'EOF'
-          cd ${{ secrets.SOLAR_APP_PATH }}
-          docker-compose build monitor
-          docker-compose up -d monitor
-         EOF
-            shell: /usr/bin/bash -e {0}
-      
+        ssh "pi@$PI" 'bash -s' -- "$APP_PATH" <<'REMOTE'
+        set -euo pipefail
+        cd "$1"
+        if docker compose version >/dev/null 2>&1; then
+          DC="docker compose"
+        else
+          DC="docker-compose"
+        fi
+        $DC up -d --build monitor
+        $DC ps monitor
+        REMOTE
