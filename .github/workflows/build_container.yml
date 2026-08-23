@@ -10,38 +10,18 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # --delete was removed here to match Deploy_Latest_code. It would wipe
-    # anything on the Pi that is not in the repo -- including the new .env
-    # holding the InfluxDB credentials.
-    - name: Copy code to Raspberry Pi
-      env:
-        PI: ${{ secrets.RASPBERRY_PI_IP }}
-        APP_PATH: ${{ secrets.SOLAR_APP_PATH }}
-      run: |
-        rsync -avz \
-          --exclude '.git/' \
-          --exclude '.github/' \
-          --exclude '.env' \
-          --exclude '.DS_Store' \
-          ./ "pi@$PI:$APP_PATH/"
-
-    # The old version of this step had its heredoc terminator indented one
-    # space past the block indent, so `<< 'EOF'` never closed: the remote shell
-    # received ` EOF` and the stray `shell:` line as commands and the step
-    # exited non-zero even when the deploy had worked.
-    - name: Deploy updated container on Raspberry Pi
-      env:
-        PI: ${{ secrets.RASPBERRY_PI_IP }}
-        APP_PATH: ${{ secrets.SOLAR_APP_PATH }}
-      run: |
-        ssh "pi@$PI" 'bash -s' -- "$APP_PATH" <<'REMOTE'
-        set -euo pipefail
-        cd "$1"
-        if docker compose version >/dev/null 2>&1; then
-          DC="docker compose"
-        else
-          DC="docker-compose"
-        fi
-        $DC up -d --build monitor
-        $DC ps monitor
-        REMOTE
+    # Deploy logic lives in one place so the two workflows cannot drift apart
+    # the way they did when each carried its own copy of the rsync and ssh steps.
+    - name: Deploy to Raspberry Pi
+      uses: ./.github/actions/deploy-to-pi
+      with:
+        pi_host: ${{ secrets.RASPBERRY_PI_IP }}
+        app_path: ${{ secrets.SOLAR_APP_PATH }}
+        db_host: ${{ vars.DB_HOST }}
+        db_port: ${{ vars.DB_PORT }}
+        db_name: ${{ vars.DB_NAME }}
+        db_username: ${{ secrets.DB_USERNAME }}
+        db_password: ${{ secrets.DB_PASSWORD }}
+        sample_interval: ${{ vars.SAMPLE_INTERVAL }}
+        log_level: ${{ vars.LOG_LEVEL }}
+        usb_device: ${{ vars.USB_DEVICE }}

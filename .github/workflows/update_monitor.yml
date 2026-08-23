@@ -12,37 +12,18 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # Secrets go through env rather than straight into the script body, so a
-    # value containing shell metacharacters cannot alter the command.
-    - name: Copy code to Raspberry Pi
-      env:
-        PI: ${{ secrets.RASPBERRY_PI_IP }}
-        APP_PATH: ${{ secrets.SOLAR_APP_PATH }}
-      run: |
-        rsync -avz \
-          --exclude '.git/' \
-          --exclude '.github/' \
-          --exclude '.env' \
-          --exclude '.DS_Store' \
-          ./ "pi@$PI:$APP_PATH/"
-
-    # The container no longer bind-mounts the source, so a code change only
-    # takes effect once the image is rebuilt. Under the old cron + bind-mount
-    # arrangement an rsync alone was enough, which is why this step used to be
-    # commented out.
-    - name: Rebuild and restart monitor
-      env:
-        PI: ${{ secrets.RASPBERRY_PI_IP }}
-        APP_PATH: ${{ secrets.SOLAR_APP_PATH }}
-      run: |
-        ssh "pi@$PI" 'bash -s' -- "$APP_PATH" <<'REMOTE'
-        set -euo pipefail
-        cd "$1"
-        if docker compose version >/dev/null 2>&1; then
-          DC="docker compose"
-        else
-          DC="docker-compose"
-        fi
-        $DC up -d --build monitor
-        $DC ps monitor
-        REMOTE
+    # Deploy logic lives in one place so the two workflows cannot drift apart
+    # the way they did when each carried its own copy of the rsync and ssh steps.
+    - name: Deploy to Raspberry Pi
+      uses: ./.github/actions/deploy-to-pi
+      with:
+        pi_host: ${{ secrets.RASPBERRY_PI_IP }}
+        app_path: ${{ secrets.SOLAR_APP_PATH }}
+        db_host: ${{ vars.DB_HOST }}
+        db_port: ${{ vars.DB_PORT }}
+        db_name: ${{ vars.DB_NAME }}
+        db_username: ${{ secrets.DB_USERNAME }}
+        db_password: ${{ secrets.DB_PASSWORD }}
+        sample_interval: ${{ vars.SAMPLE_INTERVAL }}
+        log_level: ${{ vars.LOG_LEVEL }}
+        usb_device: ${{ vars.USB_DEVICE }}
