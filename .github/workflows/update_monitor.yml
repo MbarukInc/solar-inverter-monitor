@@ -5,6 +5,17 @@ on:
     branches:
       - main
 
+# Both workflows deploy to the same Pi, so they share one concurrency group and
+# queue behind each other. Observed the alternative: a merge and a manual
+# dispatch each got their own runner pod and ran `docker compose up -d --build`
+# against the same host at the same time.
+#
+# cancel-in-progress is false deliberately. Cancelling kills the ssh client but
+# can leave the remote build running orphaned, which is worse than waiting.
+concurrency:
+  group: deploy-to-pi
+  cancel-in-progress: false
+
 jobs:
   deploy:
     # An ARC runner scale set matches on its name alone -- the [self-hosted, x]
