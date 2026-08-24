@@ -77,6 +77,32 @@ runs:
         fi
         echo "All required configuration is present."
 
+    # The stock ARC runner image has ssh (a transitive dependency) but not
+    # rsync, and this job needs both. Rather than require a specific runner
+    # image, install whatever is absent: a derived image (see homelab-infra/arc)
+    # turns this into a no-op, as does a classic runner that already has them.
+    # Verified against ghcr.io/actions/actions-runner:2.336.0 -- only rsync is
+    # actually missing there.
+    - name: Ensure rsync and ssh are available
+      shell: bash
+      run: |
+        missing=()
+        command -v rsync >/dev/null 2>&1 || missing+=(rsync)
+        command -v ssh   >/dev/null 2>&1 || missing+=(openssh-client)
+        if [ "${#missing[@]}" -eq 0 ]; then
+          echo "rsync and ssh already present; nothing to install."
+          exit 0
+        fi
+        echo "Missing: ${missing[*]} -- installing for this job."
+        if ! command -v apt-get >/dev/null 2>&1; then
+          echo "::error::No apt-get on this runner, cannot install ${missing[*]}."
+          echo "::error::Use a runner image that already provides them."
+          exit 1
+        fi
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends "${missing[@]}"
+        echo "Installed: ${missing[*]}"
+
     - name: Prepare SSH
       shell: bash
       env:
