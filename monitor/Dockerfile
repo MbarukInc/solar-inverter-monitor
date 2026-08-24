@@ -24,7 +24,7 @@ RUN apk add --no-cache --virtual .build-deps gcc musl-dev python3-dev \
 # the container worked only because docker-compose bind-mounted the source over
 # an empty WORKDIR, so the built image was not runnable on its own and there
 # was nothing to roll back to.
-COPY monitor.py probe.py ./
+COPY monitor.py probe.py scan_registers.py ./
 COPY ups/ ./ups/
 
 # Runs as root deliberately: /dev/ttyUSB0 is passed through with its host

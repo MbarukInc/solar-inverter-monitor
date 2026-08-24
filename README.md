@@ -158,6 +158,30 @@ The dashboard lives in [`grafana/`](grafana/), tracked alongside the code that
 produces the fields it queries. See that directory's README for the panel/field
 map and for why exports are normalised before committing.
 
+## Finding undocumented registers (battery SOC)
+
+The register map in `monitor/ups/must_pv1800.py` is only what someone
+transcribed from a vendor document. The inverter answers for more than that:
+the driver reads 75 registers per block and decodes about 20. `soc` was dropped
+as a field because the old code hardcoded it to `0`, not because the inverter
+cannot report it.
+
+If your battery's BMS is wired to the inverter over RS485/CAN **and** the
+inverter is configured for a lithium battery type, state of charge is likely
+sitting in an unlabelled register. To find it:
+
+```bash
+docker compose stop monitor && docker compose run --rm monitor python3 scan_registers.py --watch 5 && docker compose start monitor
+```
+
+It reads only, never writes. It lists every register holding a percentage-shaped
+value and, with `--watch`, drops the ones that never move. Compare the survivors
+against the SOC on the inverter's LCD at that moment; whichever matches is your
+register, and can then be decoded in `must_pv1800.py` and re-added as a field.
+
+If nothing matches, the inverter has no SOC to report — with no BMS link it only
+estimates from voltage, which is what `bat_volts` already gives you.
+
 ## Two things worth verifying against your unit
 
 Both are documented inline where they are computed:
