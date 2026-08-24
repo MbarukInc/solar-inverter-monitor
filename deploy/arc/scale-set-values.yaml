@@ -1,0 +1,67 @@
+# Helm values for the gha-runner-scale-set chart.
+#
+#   helm upgrade --install mbarukville \
+#     oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set \
+#     --namespace arc-runners --create-namespace \
+#     -f deploy/arc/scale-set-values.yaml
+#
+# The Helm release name becomes the runner label, so this must stay
+# "mbarukville" to match `runs-on:` in the workflows.
+
+githubConfigUrl: https://github.com/MbarukInc/solar-inverter-monitor
+
+# Pre-created secret holding the GitHub App credentials. Never checked in --
+# see README.md for the kubectl command that builds it from the PEM file.
+githubConfigSecret: arc-github-app
+
+# Scale to zero when idle. The node already runs Prometheus, Loki, Tempo,
+# Grafana, n8n and both InfluxDBs, so an idle runner holding memory is real
+# cost on a 16GB box. maxRunners is 2 because the two workflows can both fire.
+minRunners: 0
+maxRunners: 2
+
+template:
+  spec:
+    # A Secret volume cannot be mode 0600 for a non-root user, and the runner
+    # runs as uid 1001. fsGroup makes the mounted key group-readable by that
+    # process; the deploy action then copies it to ~/.ssh at mode 600, because
+    # ssh refuses a key that is group-readable.
+    securityContext:
+      fsGroup: 1001
+
+    containers:
+      - name: runner
+        image: 192.168.13.40:32000/actions-runner-deploy:2.336.0
+        # A pinned (non-latest) tag defaults to IfNotPresent, which is what
+        # makes the "ctr image import" path in README.md work without a
+        # registry. Stated explicitly so a later switch to :latest does not
+        # silently start requiring a pull.
+        imagePullPolicy: IfNotPresent
+        command: ["/home/runner/run.sh"]
+        env:
+          # Read by the deploy composite action. Absent on a classic runner
+          # (the Mac one), where the step is a no-op because that host already
+          # has its own ~/.ssh -- which is exactly why this was never needed
+          # before moving to ephemeral pods.
+          - name: DEPLOY_SSH_KEY_FILE
+            value: /etc/deploy-ssh/id_ed25519
+          - name: DEPLOY_KNOWN_HOSTS_FILE
+            value: /etc/deploy-ssh/known_hosts
+        volumeMounts:
+          - name: deploy-ssh
+            mountPath: /etc/deploy-ssh
+            readOnly: true
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            memory: 1Gi
+
+    volumes:
+      - name: deploy-ssh
+        secret:
+          secretName: pi-deploy-ssh
+          # 0440 not 0400: with fsGroup above this makes it root:1001 r--r-----,
+          # which uid 1001 can read. 0400 would be owner-only and unreadable.
+          defaultMode: 0440

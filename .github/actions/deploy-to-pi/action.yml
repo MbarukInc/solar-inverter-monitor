@@ -67,6 +67,45 @@ runs:
         fi
         echo "All required configuration is present."
 
+    # An ephemeral runner pod starts with an empty home directory: no key and
+    # no known_hosts, so ssh fails host-key verification on every job. A
+    # long-lived runner already has both, which is why this was never needed
+    # while deploys ran from a laptop. No-op when DEPLOY_SSH_KEY_FILE is unset.
+    - name: Prepare SSH on an ephemeral runner
+      shell: bash
+      env:
+        PI_HOST: ${{ inputs.pi_host }}
+      run: |
+        if [ -z "${DEPLOY_SSH_KEY_FILE:-}" ]; then
+          echo "DEPLOY_SSH_KEY_FILE unset; using the runner's own SSH setup."
+          exit 0
+        fi
+        if [ ! -r "$DEPLOY_SSH_KEY_FILE" ]; then
+          echo "::error::Cannot read $DEPLOY_SSH_KEY_FILE. Check the pi-deploy-ssh"
+          echo "::error::secret is mounted and that fsGroup matches the runner uid."
+          exit 1
+        fi
+        if [ -z "${DEPLOY_KNOWN_HOSTS_FILE:-}" ] || [ ! -r "$DEPLOY_KNOWN_HOSTS_FILE" ]; then
+          echo "::error::No known_hosts available. Refusing to disable host-key"
+          echo "::error::checking on the one machine holding the deploy key."
+          exit 1
+        fi
+        mkdir -p ~/.ssh && chmod 700 ~/.ssh
+        # Copy rather than point at the mount: ssh rejects a key that is
+        # group-readable, and a Secret volume cannot be 0600 for a non-root user.
+        install -m 600 "$DEPLOY_SSH_KEY_FILE" ~/.ssh/id_pi_deploy
+        install -m 644 "$DEPLOY_KNOWN_HOSTS_FILE" ~/.ssh/known_hosts
+        # A Host block means the later rsync and ssh calls need no extra flags.
+        cat > ~/.ssh/config <<CFG
+        Host $PI_HOST
+          User pi
+          IdentityFile ~/.ssh/id_pi_deploy
+          IdentitiesOnly yes
+          StrictHostKeyChecking yes
+        CFG
+        chmod 600 ~/.ssh/config
+        echo "SSH prepared for $PI_HOST."
+
     # .env is excluded here and written in the next step instead, so a stale
     # copy in the checkout can never overwrite the generated one.
     - name: Copy code to Raspberry Pi

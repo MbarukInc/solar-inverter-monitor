@@ -7,7 +7,11 @@ on:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, mbarukville] # Matches the label in the runner's environment variable
+    # An ARC runner scale set matches on its name alone -- the [self-hosted, x]
+    # array form never matches one, and the job just sits queued. A classic
+    # runner labelled 'mbarukville' also matches this, so the old Mac runner
+    # remains a valid fallback.
+    runs-on: mbarukville
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
