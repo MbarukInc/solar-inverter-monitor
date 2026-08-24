@@ -10,17 +10,22 @@ jobs:
     runs-on: [self-hosted, mbarukville] # Matches the label in the runner's environment variable
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
-    - name: Copy code to Raspberry Pi
-      run: |
-        rsync -avz ./ pi@${{ secrets.RASPBERRY_PI_IP }}:${{ secrets.SOLAR_APP_PATH }}
-
-    # - name: Deploy updated container on Raspberry Pi
-    #   run: |
-    #     ssh pi@${{ secrets.RASPBERRY_PI_IP }} << 'EOF'
-    #       cd ${{ secrets.SOLAR_APP_PATH }}
-    #       # docker-compose build monitor
-    #       # docker-compose up -d monitor
-    #     EOF
-    #   shell: /usr/bin/bash -e {0}
+    # Deploy logic lives in one place so the two workflows cannot drift apart
+    # the way they did when each carried its own copy of the rsync and ssh steps.
+    - name: Deploy to Raspberry Pi
+      uses: ./.github/actions/deploy-to-pi
+      with:
+        pi_host: ${{ secrets.RASPBERRY_PI_IP }}
+        app_path: ${{ secrets.SOLAR_APP_PATH }}
+        db_host: ${{ vars.DB_HOST }}
+        db_port: ${{ vars.DB_PORT }}
+        db_name: ${{ vars.DB_NAME }}
+        db_username: ${{ secrets.DB_USERNAME }}
+        db_password: ${{ secrets.DB_PASSWORD }}
+        sample_interval: ${{ vars.SAMPLE_INTERVAL }}
+        log_level: ${{ vars.LOG_LEVEL }}
+        usb_device: ${{ vars.USB_DEVICE }}
+        modbus_slave_id: ${{ vars.MODBUS_SLAVE_ID }}
+        modbus_baud_rate: ${{ vars.MODBUS_BAUD_RATE }}

@@ -1,0 +1,8 @@
+# Pinned so a breaking upstream release cannot land on the Pi unannounced.
+# Remaining transitive deps (msgpack, python-dateutil, pytz, six) float; add a
+# lock file if you ever need fully reproducible builds.
+influxdb==5.3.2
+minimalmodbus==2.1.1
+pyserial==3.5
+# Imported directly by monitor.py for RequestException, not just via influxdb.
+requests==2.34.2
