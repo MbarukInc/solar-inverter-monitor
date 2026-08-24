@@ -152,6 +152,12 @@ actual model string makes the container exit 1. It is also the `host` tag on
 every InfluxDB point, so changing it starts a new series and splits your Grafana
 history.
 
+## Grafana
+
+The dashboard lives in [`grafana/`](grafana/), tracked alongside the code that
+produces the fields it queries. See that directory's README for the panel/field
+map and for why exports are normalised before committing.
+
 ## Two things worth verifying against your unit
 
 Both are documented inline where they are computed:
