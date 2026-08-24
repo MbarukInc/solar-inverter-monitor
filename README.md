@@ -182,6 +182,26 @@ register, and can then be decoded in `must_pv1800.py` and re-added as a field.
 If nothing matches, the inverter has no SOC to report — with no BMS link it only
 estimates from voltage, which is what `bat_volts` already gives you.
 
+### Result on this unit (2026-08-24)
+
+**No SOC register found.** Scanned blocks 10100, 15200, 20100, 25200 and 25300
+with `--watch 4`. Every register whose value moved is one the driver already
+decodes:
+
+```
+25205 battery volts   25215 load W    25219 load VA    25233 radiator degC
+25211 grid A          25216 load %    25222 grid var   25250 acc buy kWh
+25212 load A          25218 grid VA   25223 load var   25254 acc load kWh
+```
+
+Everything in 10100 and 20100 was static across four samples — configuration,
+not measurement. They appear to hold the charge setpoints: 28.2 V, 27.0 V,
+25.0 V, with 21.4 V and 20.0 V looking like cutoffs.
+
+So the BMS is not reporting over Modbus: either it is not wired to the inverter
+over RS485/CAN, or the inverter is not configured for a lithium battery type.
+Blocks outside the five scanned have not been ruled out.
+
 ## Two things worth verifying against your unit
 
 Both are documented inline where they are computed:
