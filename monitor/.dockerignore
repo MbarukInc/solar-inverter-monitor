@@ -1,0 +1,10 @@
+# Keep local build artifacts out of the image. Without this, a __pycache__ left
+# behind by running python locally is COPYed in, shipping stale bytecode and
+# bloating the layer.
+#
+# Note: .dockerignore uses Go path matching, not gitignore semantics -- a bare
+# "__pycache__/" matches only the context root, so the "**/" prefix is required
+# to catch ups/__pycache__ as well.
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
