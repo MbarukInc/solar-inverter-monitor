@@ -40,6 +40,16 @@ inputs:
   modbus_baud_rate:
     description: Modbus baud rate. Compose default when empty.
     required: false
+  ssh_private_key:
+    description: >
+      Deploy key for the Pi, from a repository secret. Required on a shared
+      runner; leave empty only if the runner supplies its own SSH setup.
+    required: false
+  ssh_known_hosts:
+    description: >
+      known_hosts line for the Pi (ssh-keyscan output). Required whenever
+      ssh_private_key is set.
+    required: false
 
 runs:
   using: composite
@@ -67,34 +77,54 @@ runs:
         fi
         echo "All required configuration is present."
 
-    # An ephemeral runner pod starts with an empty home directory: no key and
-    # no known_hosts, so ssh fails host-key verification on every job. A
-    # long-lived runner already has both, which is why this was never needed
-    # while deploys ran from a laptop. No-op when DEPLOY_SSH_KEY_FILE is unset.
-    - name: Prepare SSH on an ephemeral runner
+    - name: Prepare SSH
       shell: bash
       env:
         PI_HOST: ${{ inputs.pi_host }}
+        SSH_PRIVATE_KEY: ${{ inputs.ssh_private_key }}
+        SSH_KNOWN_HOSTS: ${{ inputs.ssh_known_hosts }}
       run: |
-        if [ -z "${DEPLOY_SSH_KEY_FILE:-}" ]; then
-          echo "DEPLOY_SSH_KEY_FILE unset; using the runner's own SSH setup."
+        # An ephemeral runner pod starts with an empty home directory: no key
+        # and no known_hosts, so ssh fails host-key verification on every job.
+        # A long-lived runner already has both, which is why deploys from the
+        # old laptop runner never needed this.
+        #
+        # The key comes from a repository secret rather than being mounted into
+        # the runner pod, because the runner is shared across the whole org: a
+        # key baked into the image or pod would let any repo in MbarukInc ssh
+        # to the Pi. DEPLOY_SSH_KEY_FILE is still honoured for a dedicated
+        # runner that mounts its own.
+        if [ -n "$SSH_PRIVATE_KEY" ]; then
+          key_src="repository secret"
+        elif [ -n "${DEPLOY_SSH_KEY_FILE:-}" ] && [ -r "${DEPLOY_SSH_KEY_FILE:-}" ]; then
+          key_src="mounted file"
+        else
+          echo "No deploy key supplied; using the runner's own SSH setup."
           exit 0
         fi
-        if [ ! -r "$DEPLOY_SSH_KEY_FILE" ]; then
-          echo "::error::Cannot read $DEPLOY_SSH_KEY_FILE. Check the pi-deploy-ssh"
-          echo "::error::secret is mounted and that fsGroup matches the runner uid."
-          exit 1
-        fi
-        if [ -z "${DEPLOY_KNOWN_HOSTS_FILE:-}" ] || [ ! -r "$DEPLOY_KNOWN_HOSTS_FILE" ]; then
-          echo "::error::No known_hosts available. Refusing to disable host-key"
-          echo "::error::checking on the one machine holding the deploy key."
-          exit 1
-        fi
+
         mkdir -p ~/.ssh && chmod 700 ~/.ssh
-        # Copy rather than point at the mount: ssh rejects a key that is
-        # group-readable, and a Secret volume cannot be 0600 for a non-root user.
-        install -m 600 "$DEPLOY_SSH_KEY_FILE" ~/.ssh/id_pi_deploy
-        install -m 644 "$DEPLOY_KNOWN_HOSTS_FILE" ~/.ssh/known_hosts
+
+        if [ -n "$SSH_PRIVATE_KEY" ]; then
+          # Subshell umask so the key is never even briefly world-readable.
+          ( umask 077; printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_pi_deploy )
+        else
+          # Copy rather than point at the mount: ssh rejects a group-readable
+          # key, and a Secret volume cannot be 0600 for a non-root user.
+          install -m 600 "$DEPLOY_SSH_KEY_FILE" ~/.ssh/id_pi_deploy
+        fi
+
+        if [ -n "$SSH_KNOWN_HOSTS" ]; then
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+        elif [ -n "${DEPLOY_KNOWN_HOSTS_FILE:-}" ] && [ -r "${DEPLOY_KNOWN_HOSTS_FILE:-}" ]; then
+          cp "$DEPLOY_KNOWN_HOSTS_FILE" ~/.ssh/known_hosts
+        else
+          echo "::error::No known_hosts supplied. Refusing to disable host-key"
+          echo "::error::checking on a job that holds the deploy key."
+          exit 1
+        fi
+        chmod 644 ~/.ssh/known_hosts
+
         # A Host block means the later rsync and ssh calls need no extra flags.
         cat > ~/.ssh/config <<CFG
         Host $PI_HOST
@@ -104,7 +134,7 @@ runs:
           StrictHostKeyChecking yes
         CFG
         chmod 600 ~/.ssh/config
-        echo "SSH prepared for $PI_HOST."
+        echo "SSH prepared for $PI_HOST (key from $key_src)."
 
     # .env is excluded here and written in the next step instead, so a stale
     # copy in the checkout can never overwrite the generated one.

@@ -19,6 +19,13 @@ Repository secrets (Settings → Secrets and variables → Actions → Secrets):
 | `DB_PASSWORD` | InfluxDB password |
 | `RASPBERRY_PI_IP` | already configured |
 | `SOLAR_APP_PATH` | already configured |
+| `PI_SSH_KEY` | Private deploy key for `pi@<RASPBERRY_PI_IP>` |
+| `PI_KNOWN_HOSTS` | `ssh-keyscan -H <PI_IP>` output for that host |
+
+`PI_SSH_KEY` and `PI_KNOWN_HOSTS` live here rather than being mounted into the
+runner because the runner is shared across the org — a key baked into the pod
+would let any repo in `MbarukInc` reach the Pi. Capture the host key from a
+machine you trust on the LAN; it is the trust anchor for every future deploy.
 
 Repository variables (same page → Variables). Only `DB_HOST` is required; the
 rest fall back to the defaults in `docker-compose.yml` when unset:
@@ -91,6 +98,10 @@ would otherwise leave the daemon wedged on a dead file descriptor forever.
 An InfluxDB outage is logged and the sample dropped; it does not stop polling.
 
 ## Deployment
+
+Jobs run on the shared org runner (`runs-on: mbarukville`), an ARC runner scale
+set in the home MicroK8s cluster. That setup lives in its own repository, not
+here — see the runner repo for the cluster-side manifests.
 
 Pushing to `main` triggers `Deploy_Latest_code`; `Build_Container` does the same
 thing on demand. Both are thin wrappers around
