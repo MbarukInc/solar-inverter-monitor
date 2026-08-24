@@ -110,8 +110,15 @@ verified, though, and a swap is exactly when the link parameters and the map can
 move. Confirm with the bundled probe before trusting the data:
 
 ```bash
+docker compose stop monitor
+docker compose build monitor
 docker compose run --rm monitor python3 probe.py --nominal-va 3200
+docker compose start monitor
 ```
+
+Stop the daemon first. Neither pyserial nor minimalmodbus opens the port
+exclusively, so the probe and a running monitor would both hold
+`/dev/ttyUSB0` and corrupt each other's replies.
 
 It reads only, never writes. It reports every decoded value against a plausible
 range and then cross-checks the things that would otherwise fail silently:
