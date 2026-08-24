@@ -158,6 +158,50 @@ The dashboard lives in [`grafana/`](grafana/), tracked alongside the code that
 produces the fields it queries. See that directory's README for the panel/field
 map and for why exports are normalised before committing.
 
+## Finding undocumented registers (battery SOC)
+
+The register map in `monitor/ups/must_pv1800.py` is only what someone
+transcribed from a vendor document. The inverter answers for more than that:
+the driver reads 75 registers per block and decodes about 20. `soc` was dropped
+as a field because the old code hardcoded it to `0`, not because the inverter
+cannot report it.
+
+If your battery's BMS is wired to the inverter over RS485/CAN **and** the
+inverter is configured for a lithium battery type, state of charge is likely
+sitting in an unlabelled register. To find it:
+
+```bash
+docker compose stop monitor && docker compose run --rm monitor python3 scan_registers.py --watch 5 && docker compose start monitor
+```
+
+It reads only, never writes. It lists every register holding a percentage-shaped
+value and, with `--watch`, drops the ones that never move. Compare the survivors
+against the SOC on the inverter's LCD at that moment; whichever matches is your
+register, and can then be decoded in `must_pv1800.py` and re-added as a field.
+
+If nothing matches, the inverter has no SOC to report — with no BMS link it only
+estimates from voltage, which is what `bat_volts` already gives you.
+
+### Result on this unit (2026-08-24)
+
+**No SOC register found.** Scanned blocks 10100, 15200, 20100, 25200 and 25300
+with `--watch 4`. Every register whose value moved is one the driver already
+decodes:
+
+```
+25205 battery volts   25215 load W    25219 load VA    25233 radiator degC
+25211 grid A          25216 load %    25222 grid var   25250 acc buy kWh
+25212 load A          25218 grid VA   25223 load var   25254 acc load kWh
+```
+
+Everything in 10100 and 20100 was static across four samples — configuration,
+not measurement. They appear to hold the charge setpoints: 28.2 V, 27.0 V,
+25.0 V, with 21.4 V and 20.0 V looking like cutoffs.
+
+So the BMS is not reporting over Modbus: either it is not wired to the inverter
+over RS485/CAN, or the inverter is not configured for a lithium battery type.
+Blocks outside the five scanned have not been ruled out.
+
 ## Two things worth verifying against your unit
 
 Both are documented inline where they are computed:
