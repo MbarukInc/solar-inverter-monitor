@@ -1,7 +1,7 @@
 # solar-inverter-monitor
 
-Polls a MUST PV18-series solar inverter (tested against a **PV18-3024 VPM**) over
-Modbus RTU and writes samples to InfluxDB. Runs as a Docker container on a
+Polls a MUST PV18-series solar inverter (currently a **PV18-3224 VPM II**;
+previously a PV18-3024 VPM) over Modbus RTU and writes samples to InfluxDB. Runs as a Docker container on a
 Raspberry Pi with the inverter's RS485/USB adapter on `/dev/ttyUSB0`.
 
 ## Configuration
@@ -31,6 +31,8 @@ rest fall back to the defaults in `docker-compose.yml` when unset:
 | `SAMPLE_INTERVAL` | `30` |
 | `LOG_LEVEL` | `INFO` |
 | `USB_DEVICE` | `/dev/ttyUSB0` |
+| `MODBUS_SLAVE_ID` | `4` |
+| `MODBUS_BAUD_RATE` | `19200` |
 
 Rotating the InfluxDB password means updating the secret and re-running
 `Build_Container` — no SSH to the Pi required. The workflow fails before it
@@ -69,6 +71,8 @@ itself.
 | `SAMPLE_INTERVAL` | `30` | Seconds between samples |
 | `RECONNECT_AFTER` | `3` | Consecutive failures before reopening the port |
 | `INTER_READ_DELAY` | `3` | Seconds between the two register block reads |
+| `MODBUS_SLAVE_ID` | `4` | Only change if `probe.py --scan` finds another |
+| `MODBUS_BAUD_RATE` | `19200` | Same |
 | `LOG_LEVEL` | `INFO` | `DEBUG` for more detail |
 | `DUMP_REGISTERS` | unset | Set to `1` to dump raw register blocks as JSON |
 | `DUMP_DIR` | `/tmp` | Where those dumps land |
@@ -96,6 +100,39 @@ cannot drift apart the way they previously did.
 
 **The container no longer bind-mounts the source**, so a code change requires a
 rebuild — an rsync alone is no longer enough.
+
+## After changing inverter, firmware or cabling
+
+The PV18 models share one Modbus register map — the model number changes the VA
+rating and battery voltage the readings land in, not the register addresses — so
+the driver is expected to carry over between PV18 units. Expected is not
+verified, though, and a swap is exactly when the link parameters and the map can
+move. Confirm with the bundled probe before trusting the data:
+
+```bash
+docker compose run --rm monitor python3 probe.py --nominal-va 3200
+```
+
+It reads only, never writes. It reports every decoded value against a plausible
+range and then cross-checks the things that would otherwise fail silently:
+whether real power exceeds apparent power (which would mean registers have
+moved), whether the charger-power scale still matches `pvBattVoltage *
+pvChargeCurrent`, whether any state code is missing from `STATES`, and what VA
+rating the load percentage implies — a PV18-3224 should come out near 3200.
+
+If nothing answers, sweep the common link parameters:
+
+```bash
+docker compose run --rm monitor python3 probe.py --scan
+```
+
+Set `MODBUS_SLAVE_ID` and `MODBUS_BAUD_RATE` to whatever it finds.
+
+Note that `INVERTER_MODEL` is a driver key, not a model number: the only valid
+value is `must-pv1800`, which selects the PV18-family driver. Setting it to an
+actual model string makes the container exit 1. It is also the `host` tag on
+every InfluxDB point, so changing it starts a new series and splits your Grafana
+history.
 
 ## Two things worth verifying against your unit
 

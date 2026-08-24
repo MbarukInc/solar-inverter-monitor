@@ -28,6 +28,12 @@ INTER_READ_DELAY = float(os.environ.get("INTER_READ_DELAY", "3"))
 # to 1000.
 CHARGER_POWER_TO_KW = 10000.0
 
+# Modbus link parameters. Overridable because they are the first things that
+# can differ after an inverter swap or firmware change; run probe.py --scan if
+# the defaults stop responding.
+MODBUS_SLAVE_ID = int(os.environ.get("MODBUS_SLAVE_ID", "4"))
+MODBUS_BAUD_RATE = int(os.environ.get("MODBUS_BAUD_RATE", "19200"))
+
 STATES = {
     0: "PowerOn",
     1: "SelfTest",
@@ -63,8 +69,16 @@ def signed16(value: int) -> int:
 
 
 class MustPV1800(UPS):
-    def __init__(self, device_path: str):
-        super().__init__(device_path, 4, 19200)
+    """Driver for the MUST PV18 family (PV18-3024, PV18-3224, ...).
+
+    The PV18 models share one Modbus register map; the model number affects the
+    VA rating and battery voltage the numbers land in, not their addresses.
+    Confirm with probe.py after changing units -- see README.
+    """
+
+    def __init__(self, device_path: str, device_id: int = MODBUS_SLAVE_ID,
+                 baud_rate: int = MODBUS_BAUD_RATE):
+        super().__init__(device_path, device_id, baud_rate)
 
     def _dump(self, name: str, registers: list) -> None:
         if not DUMP_REGISTERS:
