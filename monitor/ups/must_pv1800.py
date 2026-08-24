@@ -176,7 +176,11 @@ class MustPV1800(UPS):
         if state_code not in STATES:
             log.warning("undocumented inverter state code %d", state_code)
         gridState = soc_25200[38]
-        gridPower = soc_25200[14]
+        # 25214 is signed: the inverter reports grid flow direction by sign, so
+        # a raw read wraps negatives into 32768..65535. Seen in production as
+        # gridPower=64626 when the real value was -910 W (cross-checked against
+        # gridVoltage 237.8 x gridCurrent 4.1 = 975 VA against a 914 W load).
+        gridPower = signed16(soc_25200[14])
         accdischargerpower = accumulated_kwh(soc_25200[47], soc_25200[48])
         accloadpower = accumulated_kwh(soc_25200[53], soc_25200[54])
         accselfusepower = accumulated_kwh(soc_25200[55], soc_25200[56])
