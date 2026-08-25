@@ -166,7 +166,7 @@ class MustPV1800(UPS):
         self._dump("soc_25200", soc_25200)
 
         pvVoltage = soc_15200[5] / 10
-        radiatorTemp = soc_15200[9]
+        radiatorTemp = signed16(soc_15200[9])
         pvChargeCurrent = soc_15200[7] / 10
         pvChargePower = soc_15200[8] / CHARGER_POWER_TO_KW
         pvBattVoltage = soc_15200[6] / 10
@@ -177,8 +177,13 @@ class MustPV1800(UPS):
         batAmps = signed16(soc_25200[74])
         loadPercent = soc_25200[16]
         outputVA = soc_25200[19]
-        outputW = soc_25200[15]
-        tempInt = soc_25200[33]
+        # 25215 is signed like 25214: at near-zero load the inverter reports
+        # small negative values, which read as ~65525 unsigned. Seen in
+        # production 2026-08-25 as output_w=65522 with output_va=0, poisoning
+        # every energy total that sums this field.
+        outputW = signed16(soc_25200[15])
+        # Signed for the same reason: a sub-zero reading would wrap.
+        tempInt = signed16(soc_25200[33])
         state_code = soc_25200[1]
         state = STATES.get(state_code, "Unknown({0})".format(state_code))
         if state_code not in STATES:
