@@ -42,5 +42,6 @@ jobs:
         usb_device: ${{ vars.USB_DEVICE }}
         modbus_slave_id: ${{ vars.MODBUS_SLAVE_ID }}
         modbus_baud_rate: ${{ vars.MODBUS_BAUD_RATE }}
+        debug_registers: ${{ vars.DEBUG_REGISTERS }}
         ssh_private_key: ${{ secrets.PI_SSH_KEY }}
         ssh_known_hosts: ${{ secrets.PI_KNOWN_HOSTS }}
