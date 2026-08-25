@@ -4,7 +4,7 @@ import glob
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import minimalmodbus
 
@@ -58,6 +58,10 @@ class Sample(object):
     gridvoltage: float
     # 25211: ["Grid current", 0.1, "A"],
     gridcurrent: float
+    # Raw values for registers named in DEBUG_REGISTERS, keyed by address.
+    # For identifying undocumented registers by watching them over a real
+    # charge/discharge cycle. Empty unless that variable is set.
+    extra: dict = field(default_factory=dict)
 
 
 class UPS(object):

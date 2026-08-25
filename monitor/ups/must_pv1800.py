@@ -34,6 +34,14 @@ CHARGER_POWER_TO_KW = 1000.0
 MODBUS_SLAVE_ID = int(os.environ.get("MODBUS_SLAVE_ID", "4"))
 MODBUS_BAUD_RATE = int(os.environ.get("MODBUS_BAUD_RATE", "19200"))
 
+# Comma-separated register addresses to record raw alongside the decoded
+# fields, e.g. "15204,15218". For identifying undocumented registers: a
+# snapshot cannot tell SOC from a charge-stage code, but a full charge and
+# discharge cycle can. Unset in normal operation.
+DEBUG_REGISTERS = [
+    int(a) for a in os.environ.get("DEBUG_REGISTERS", "").replace(" ", "").split(",") if a
+]
+
 STATES = {
     0: "PowerOn",
     1: "SelfTest",
@@ -190,7 +198,17 @@ class MustPV1800(UPS):
         # Keyword arguments deliberately: this record has 20 fields including
         # the near-identical pvVoltage/pvBattVoltage and gridPower/gridvoltage,
         # and a misplaced positional would write plausible-looking garbage.
+        extra = {}
+        for address in DEBUG_REGISTERS:
+            for base, block in ((15200, soc_15200), (25200, soc_25200)):
+                if base <= address < base + len(block):
+                    extra[address] = block[address - base]
+                    break
+            else:
+                log.warning("DEBUG_REGISTERS: %d is outside the blocks read", address)
+
         return Sample(
+            extra=extra,
             bat_volts=batVolts,
             bat_amps=batAmps,
             ac=inputVolts,

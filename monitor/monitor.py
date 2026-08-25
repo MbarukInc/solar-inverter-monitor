@@ -46,6 +46,9 @@ shutdown = threading.Event()
 
 
 def build_point(sample) -> dict:
+    # Raw debug registers ride alongside as reg_<address>. Integers, so they
+    # cannot collide in type with anything already written.
+    extra_fields = {"reg_{0}".format(a): int(v) for a, v in sample.extra.items()}
     return {
         "measurement": "logs",
         "tags": {
@@ -74,6 +77,7 @@ def build_point(sample) -> dict:
             "accSelfusePower": sample.accselfusepower,
             "gridVoltage": sample.gridvoltage,
             "gridCurrent": sample.gridcurrent,
+            **extra_fields,
         }
     }
 

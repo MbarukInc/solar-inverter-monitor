@@ -198,9 +198,25 @@ Everything in 10100 and 20100 was static across four samples — configuration,
 not measurement. They appear to hold the charge setpoints: 28.2 V, 27.0 V,
 25.0 V, with 21.4 V and 20.0 V looking like cutoffs.
 
-So the BMS is not reporting over Modbus: either it is not wired to the inverter
-over RS485/CAN, or the inverter is not configured for a lithium battery type.
-Blocks outside the five scanned have not been ruled out.
+Re-scanned 2026-08-25 with the pack charging at 26.8 V, which is the condition
+that makes SOC identifiable — at 0% every candidate reads near zero and is
+indistinguishable from the relay-state registers. Two undocumented registers
+track charge state:
+
+| register | flat pack, 20.3 V | charging, 26.8 V |
+| --- | --- | --- |
+| 15218 | 24 | 94 |
+| 15204 | 0 | 90 |
+
+Neither is in the vendor map, and the LCD shows only a four-bar icon with no
+number, so they cannot be told apart from a snapshot. Set
+`DEBUG_REGISTERS=15204,15218` to record both raw as `reg_15204` / `reg_15218`
+and compare them across a full charge/discharge cycle: SOC should trace a smooth
+curve against accumulated energy, while a stage or duty-cycle code will step.
+
+Every *other* register that moves is already decoded, so if neither of these is
+SOC, the inverter is not exposing it. Blocks outside the five scanned remain
+unchecked.
 
 ## Two things worth verifying against your unit
 
