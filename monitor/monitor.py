@@ -45,6 +45,29 @@ log = logging.getLogger("monitor")
 shutdown = threading.Event()
 
 
+def implausible(sample) -> list:
+    """Internal contradictions that mean a field decoded wrongly.
+
+    Three sign bugs have reached production (gridPower, output_w, bat_amps),
+    each producing values near 65535 that looked like real numbers and quietly
+    poisoned energy totals. These checks cost nothing per sample and turn the
+    next one into a log line instead of a corrupted dashboard.
+    """
+    problems = []
+    if sample.output_va > 0 and sample.output_w > sample.output_va * 1.05:
+        problems.append("output_w {0} exceeds output_va {1}".format(
+            sample.output_w, sample.output_va))
+    for name, value, low, high in (
+            ("bat_volts", sample.bat_volts, 0, 80),
+            ("output_w", sample.output_w, -20000, 20000),
+            ("output_va", sample.output_va, 0, 20000),
+            ("load_percent", sample.load_percent, 0, 200),
+            ("gridvoltage", sample.gridvoltage, 0, 400)):
+        if not low <= value <= high:
+            problems.append("{0}={1} outside {2}..{3}".format(name, value, low, high))
+    return problems
+
+
 def build_point(sample) -> dict:
     # Raw debug registers ride alongside as reg_<address>. Integers, so they
     # cannot collide in type with anything already written.
@@ -149,6 +172,8 @@ def main() -> int:
                 log.info("recovered after %d failed samples", consecutive_failures)
             consecutive_failures = 0
             last_failure = None
+            for problem in implausible(sample):
+                log.warning("implausible reading, check the decode: %s", problem)
             log.info("Measured: %s", sample)
             point = build_point(sample)
             # A database outage must not cost us the next sample too, so the
