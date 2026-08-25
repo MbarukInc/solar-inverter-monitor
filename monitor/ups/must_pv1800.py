@@ -18,15 +18,15 @@ DUMP_DIR = os.environ.get("DUMP_DIR", "/tmp")
 # UPS.read_registers retries, but lower it carefully.
 INTER_READ_DELAY = float(os.environ.get("INTER_READ_DELAY", "3"))
 
-# 15208 "Charger power" is documented in the register map below as 0.1 W per
-# count, so kW = raw * 0.1 / 1000. The old code divided by 1000, which is 10x
-# high if that scale is right.
+# 15208 "Charger power" is 1 W per count, NOT the 0.1 W the vendor register map
+# below claims. Measured on hardware 2026-08-25: recorded 0.0477 kW against
+# pvBattVoltage 25.1 V * pvChargeCurrent 18.9 A = 0.474 kW, a ratio of 10.0x
+# across every sample.
 #
-# VERIFY ON YOUR UNIT: pvChargePower should track pvBattVoltage *
-# pvChargeCurrent (e.g. 27.5 V * 30 A = 0.825 kW). If it now reads 10x LOW,
-# your firmware reports this register in 1 W per count -- set the divisor
-# to 1000.
-CHARGER_POWER_TO_KW = 10000.0
+# The original code divided by 1000 and was right. It was changed to 10000 to
+# match the vendor documentation, which is simply wrong for this firmware --
+# so trust this constant over the comment block in sample() below.
+CHARGER_POWER_TO_KW = 1000.0
 
 # Modbus link parameters. Overridable because they are the first things that
 # can differ after an inverter swap or firmware change; run probe.py --scan if
@@ -94,7 +94,7 @@ class MustPV1800(UPS):
         # 15205: ["PV voltage", 0.1, "V"],
         # 15206: ["Battery voltage", 0.1, "V"],
         # 15207: ["Charger current", 0.1, "A"],
-        # 15208: ["Charger power", 0.1, "W"],
+        # 15208: ["Charger power", 0.1, "W"],   <- WRONG: measured as 1 W/count
         # 15209 : ["Radiator temperature", 1, "°C"],
         # 15210 : ["External temperature", 1, "°C"],
         # 15211: ["Battery Relay", 1, ""],
