@@ -158,6 +158,19 @@ The dashboard lives in [`grafana/`](grafana/), tracked alongside the code that
 produces the fields it queries. See that directory's README for the panel/field
 map and for why exports are normalised before committing.
 
+## Checking configuration is actually deliverable
+
+```bash
+python3 monitor/check_env_plumbing.py
+```
+
+A setting has to appear in four places to work: read by the code, declared in
+`docker-compose.yml`, passed through `.github/actions/deploy-to-pi`, and mapped
+from a repository variable in both workflows. Miss one and setting the variable
+does nothing, silently — which has happened twice (`USB_DEVICE` was hardcoded
+past its own variable, `DEBUG_REGISTERS` was absent from all three deploy
+layers). This script cross-references them and exits non-zero on a gap.
+
 ## Finding undocumented registers (battery SOC)
 
 The register map in `monitor/ups/must_pv1800.py` is only what someone

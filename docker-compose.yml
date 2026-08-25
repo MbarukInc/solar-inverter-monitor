@@ -33,6 +33,9 @@ services:
       INVERTER_MODEL: "must-pv1800"
       MODBUS_SLAVE_ID: "${MODBUS_SLAVE_ID:-4}"
       MODBUS_BAUD_RATE: "${MODBUS_BAUD_RATE:-19200}"
+      # Empty in normal operation. Set to a comma-separated register list
+      # to record those raw as reg_<address> fields.
+      DEBUG_REGISTERS: "${DEBUG_REGISTERS:-}"
       SAMPLE_INTERVAL: "${SAMPLE_INTERVAL:-30}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
     # The daemon logs a line per sample. Without rotation that grows without
