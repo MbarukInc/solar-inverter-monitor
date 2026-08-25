@@ -18,7 +18,13 @@ services:
     device_cgroup_rules:
       - "c 188:* rmw"
     environment:
-      USB_DEVICE: "/dev/ttyUSB0"
+      # Was hardcoded to /dev/ttyUSB0, which was correct only while the
+      # `devices:` mapping renamed the host node to that path inside the
+      # container. Without that mapping the container sees the real host path,
+      # so this has to come from configuration. Set USB_DEVICE to the
+      # /dev/serial/by-id symlink: it survives the renumbering that broke this
+      # on 2026-08-24, where the adapter came back as ttyUSB1.
+      USB_DEVICE: "${USB_DEVICE:-/dev/ttyUSB0}"
       DB_HOST: "${DB_HOST:?set DB_HOST in .env}"
       DB_PORT: "${DB_PORT:-8086}"
       DB_USERNAME: "${DB_USERNAME:?set DB_USERNAME in .env}"
