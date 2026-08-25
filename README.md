@@ -210,9 +210,10 @@ Both are documented inline where they are computed:
    `accSelfusePower`) combine a high/low register pair. The vendor map's scale
    factors are self-contradictory, so the pair is read as a 32-bit counter in
    0.1 kWh units. Compare against the lifetime totals on the inverter's LCD.
-2. **`pvChargePower`** assumes register 15208 is 0.1 W per count. It should
-   track `pvBattVoltage * pvChargeCurrent`; if it reads 10x low, your firmware
-   uses 1 W per count — see `CHARGER_POWER_TO_KW` in `monitor/ups/must_pv1800.py`.
+2. **`pvChargePower`** — settled on 2026-08-25. Register 15208 is **1 W per
+   count**, not the 0.1 W the vendor map claims. Measured against
+   `pvBattVoltage * pvChargeCurrent`: exactly 10.0x across every sample.
+   `CHARGER_POWER_TO_KW` is 1000.0 and should stay there.
 
 ## Credits
 
