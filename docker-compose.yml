@@ -4,8 +4,19 @@ services:
     build:
       context: monitor
     restart: always
-    devices:
-      - "${USB_DEVICE:-/dev/ttyUSB0}:/dev/ttyUSB0"
+    # Not a `devices:` mapping. That binds one device node at container-create
+    # time, so when the adapter de-enumerates during an inverter outage and the
+    # kernel hands it back as ttyUSB1, the mapping points at a node that no
+    # longer exists and every read fails with ENXIO until the container is
+    # recreated. Observed in production overnight on 2026-08-24.
+    #
+    # Instead: make /dev visible and grant access to USB-serial character
+    # devices only (major 188). Whatever node the adapter lands on, the
+    # container can open it, and ups.resolve_device() finds it.
+    volumes:
+      - /dev:/dev
+    device_cgroup_rules:
+      - "c 188:* rmw"
     environment:
       USB_DEVICE: "/dev/ttyUSB0"
       DB_HOST: "${DB_HOST:?set DB_HOST in .env}"
