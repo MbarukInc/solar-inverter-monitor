@@ -111,23 +111,40 @@ def main() -> int:
         return 1
 
     consecutive_failures = 0
+    last_failure = None
 
     while not shutdown.is_set():
         started = datetime.now(timezone.utc)
 
         try:
             sample = inverter.sample()
-        except Exception:
+        except Exception as exc:
             consecutive_failures += 1
-            log.exception("sample failed (%d consecutive)", consecutive_failures)
+            # The adapter is powered from the inverter, so an inverter outage
+            # takes the serial device with it -- for hours, at one failure per
+            # SAMPLE_INTERVAL. A full traceback each time buried the log in
+            # 989KB of identical stacks during one night's outage, so repeat
+            # the traceback only when the failure changes.
+            signature = "{0}: {1}".format(type(exc).__name__, exc)
+            if signature != last_failure:
+                log.exception("sample failed (%d consecutive)", consecutive_failures)
+                last_failure = signature
+            else:
+                log.warning("sample failed (%d consecutive, unchanged): %s",
+                            consecutive_failures, signature)
             if consecutive_failures >= RECONNECT_AFTER:
                 try:
                     inverter.reconnect()
                     consecutive_failures = 0
-                except Exception:
-                    log.exception("reconnect failed, will retry next cycle")
+                    last_failure = None
+                except Exception as reconnect_exc:
+                    log.warning("reconnect failed, retrying next cycle: %s",
+                                reconnect_exc)
         else:
+            if last_failure is not None:
+                log.info("recovered after %d failed samples", consecutive_failures)
             consecutive_failures = 0
+            last_failure = None
             log.info("Measured: %s", sample)
             point = build_point(sample)
             # A database outage must not cost us the next sample too, so the

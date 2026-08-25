@@ -1,6 +1,8 @@
 """Shared inverter plumbing: the Sample record and the serial/Modbus transport."""
 
+import glob
 import logging
+import os
 import time
 from dataclasses import dataclass
 
@@ -69,9 +71,39 @@ class UPS(object):
         self.scc = None
         self.connect()
 
+    def resolve_device(self) -> str:
+        """Find the adapter, even if the kernel moved it.
+
+        The USB-RS485 adapter is powered from the inverter, so when the inverter
+        drops out the adapter de-enumerates -- and the kernel does not always
+        hand back the same node when it returns. Observed in production:
+        /dev/ttyUSB0 became /dev/ttyUSB1 after an inverter outage, and every
+        read failed with ENXIO from then on even though the hardware was fine.
+
+        Prefer the configured path, then the stable by-id symlink, then any
+        ttyUSB node. by-id is preferred over a bare glob because it survives
+        renumbering; the glob is the last resort when udev has no by-id entry.
+        """
+        if os.path.exists(self.device_path):
+            return self.device_path
+
+        for candidate in sorted(glob.glob("/dev/serial/by-id/*")):
+            log.warning("%s is gone; using stable path %s",
+                        self.device_path, candidate)
+            return candidate
+
+        for candidate in sorted(glob.glob("/dev/ttyUSB*")):
+            log.warning("%s is gone; falling back to %s",
+                        self.device_path, candidate)
+            return candidate
+
+        # Nothing there. Return the configured path so the caller fails with a
+        # message naming what was actually looked for.
+        return self.device_path
+
     def connect(self) -> None:
         """Open the serial port and bind a Modbus instrument to it."""
-        self.scc = minimalmodbus.Instrument(self.device_path, self.device_id)
+        self.scc = minimalmodbus.Instrument(self.resolve_device(), self.device_id)
         self.scc.serial.baudrate = self.baud_rate
         self.scc.serial.timeout = self.timeout
 
