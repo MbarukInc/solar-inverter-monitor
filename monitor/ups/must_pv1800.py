@@ -56,19 +56,18 @@ STATES = {
 def accumulated_kwh(high: int, low: int) -> float:
     """Combine a high/low accumulated-energy register pair into kWh.
 
-    The vendor map labels 'high' as 1 kWh per count and 'low' as 0.1 kWh per
-    count, which cannot both be true -- 'low' alone spans 0..6553.5 kWh, so a
-    1 kWh 'high' would be swamped by it. Treating the pair as the two halves of
-    a 32-bit counter in 0.1 kWh units is the reading consistent with the
-    high/low naming, and it is identical to the old behaviour while high == 0
-    (which it will be until lifetime totals pass 6553.5 kWh). That keeps
-    existing dashboards continuous today and correct after the rollover that
-    would have broken them.
+    Settled against the official protocol spreadsheet (MUST "PH1800 PV1800
+    EP1800 PV3500 EP3500 RS485 Modbus RTU communication Protocol" v1.4.15),
+    which gives the high register as 1000 kWh per count and the low as 0.1 kWh:
 
-    VERIFY: compare against the lifetime totals on the inverter's own LCD. If
-    they disagree, the other plausible reading is high * 1000 + low * 0.1.
+        25247  Accumulated discharger power high | 1000KWH
+        25248  Accumulated discharger power low  | 0.1KWH
+
+    This was previously read as the two halves of a 32-bit 0.1 kWh counter.
+    That is identical while high == 0, which is why it looked correct, and
+    wrong by a factor of 6.55 the moment it rolls over.
     """
-    return ((high << 16) | low) * 0.1
+    return high * 1000.0 + low * 0.1
 
 
 def signed16(value: int) -> int:
@@ -102,7 +101,8 @@ class MustPV1800(UPS):
         # 15205: ["PV voltage", 0.1, "V"],
         # 15206: ["Battery voltage", 0.1, "V"],
         # 15207: ["Charger current", 0.1, "A"],
-        # 15208: ["Charger power", 0.1, "W"],   <- WRONG: measured as 1 W/count
+        # 15208: ["Charger power", 1, "W"],    (0-5000)W -- spec v1.4.15;
+        #        the 0.1 W in the original transcription was wrong
         # 15209 : ["Radiator temperature", 1, "°C"],
         # 15210 : ["External temperature", 1, "°C"],
         # 15211: ["Battery Relay", 1, ""],
@@ -119,7 +119,9 @@ class MustPV1800(UPS):
         # 25213: ["Inverter power(P)", 1, "W"],
         # 25214: ["Grid power(P)", 1, "W"],
         # 25215: ["Load power(P)", 1, "W"],
-        # 25216: ["Load percent", 1, "%"],
+        # 25216: ["Load percent", 1, "%"],  spec says 0.01 and marks it "new";
+        #        this unit reports whole percent -- 25% at 736VA on a ~3kVA
+        #        inverter -- so 1 is right here. Recheck after a firmware update.
         # 25217: ["Inverter complex power(S)", 1, "VA"],
         # 25218: ["Grid complex power(S)", 1, "VA"],
         # 25219: ["Load complex power(S)", 1, "VA"],
@@ -139,15 +141,15 @@ class MustPV1800(UPS):
         # 25242: ["Earth relay state", 1, ""],
         # 25245: ["Accumulated charger power high", 1, "kWh"],
         # 25246: ["Accumulated charger power low", 0.1, "kWh"],
-        # 25247: ["Accumulated discharger power high", 1, "kWh"],
+        # 25247: ["Accumulated discharger power high", 1000, "kWh"],  spec v1.4.15
         # 25248: ["Accumulated discharger power low", 0.1, "kWh"],
         # 25249: ["Accumulated buy power high", 1, "kWh"],
         # 25250: ["Accumulated buy power low", 0.1, "kWh"],
         # 25251: ["Accumulated sell power high", 1, "kWh"],
         # 25252: ["Accumulated sell power low", 0.1, "kWh"],
-        # 25253: ["Accumulated load power high", 1, "kWh"],
+        # 25253: ["Accumulated load power high", 1000, "kWh"],  spec v1.4.15
         # 25254: ["Accumulated load power low", 0.1, "kWh"],
-        # 25255: ["Accumulated self_use power high", 1, "kWh"],
+        # 25255: ["Accumulated self_use power high", 1000, "kWh"],  spec v1.4.15
         # 25256: ["Accumulated self_use power low", 0.1, "kWh"],
         # 25257: ["Accumulated PV_sell power high", 1, "kWh"],
         # 25258: ["Accumulated PV_sell power low", 0.1, "kWh"],

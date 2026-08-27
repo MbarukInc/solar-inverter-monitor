@@ -235,10 +235,13 @@ unchecked.
 
 Both are documented inline where they are computed:
 
-1. **Accumulated energy counters** (`accDischargerPower`, `accLoadPower`,
-   `accSelfusePower`) combine a high/low register pair. The vendor map's scale
-   factors are self-contradictory, so the pair is read as a 32-bit counter in
-   0.1 kWh units. Compare against the lifetime totals on the inverter's LCD.
+1. ~~**Accumulated energy counters**~~ — settled. The official protocol
+   spreadsheet (MUST "PH1800 PV1800 EP1800 PV3500 EP3500 RS485 Modbus RTU
+   communication Protocol" v1.4.15, shipped in
+   [xxx87/must-inverter-mon](https://github.com/xxx87/must-inverter-mon))
+   gives the high register as **1000 kWh** per count and the low as 0.1 kWh, so
+   the total is `high * 1000 + low * 0.1`. Identical while `high == 0`, which is
+   why the earlier 32-bit reading looked correct.
 2. **`pvChargePower`** — settled on 2026-08-25. Register 15208 is **1 W per
    count**, not the 0.1 W the vendor map claims. Measured against
    `pvBattVoltage * pvChargeCurrent`: exactly 10.0x across every sample.
