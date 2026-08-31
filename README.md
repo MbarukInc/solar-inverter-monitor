@@ -80,6 +80,9 @@ itself.
 | `INTER_READ_DELAY` | `3` | Seconds between the two register block reads |
 | `MODBUS_SLAVE_ID` | `4` | Only change if `probe.py --scan` finds another |
 | `MODBUS_BAUD_RATE` | `19200` | Same |
+| `BATTERY_DEVICE` | unset | by-path of the RS485 adapter on the battery BMS; empty disables it |
+| `BMS_SLAVE_ID` | `1` | BMS Modbus slave id |
+| `BMS_BAUD_RATE` | `9600` | BMS baud rate |
 | `LOG_LEVEL` | `INFO` | `DEBUG` for more detail |
 | `DUMP_REGISTERS` | unset | Set to `1` to dump raw register blocks as JSON |
 | `DUMP_DIR` | `/tmp` | Where those dumps land |
@@ -170,6 +173,45 @@ from a repository variable in both workflows. Miss one and setting the variable
 does nothing, silently — which has happened twice (`USB_DEVICE` was hardcoded
 past its own variable, `DEBUG_REGISTERS` was absent from all three deploy
 layers). This script cross-references them and exits non-zero on a gap.
+
+## Battery BMS (state of charge)
+
+The inverter exposes **no** state of charge — the MUST PV18 Modbus protocol does
+not define one. The battery does, over its own RS485 port, so the monitor reads
+the BMS directly as a second device.
+
+MUST LP16-24200, PACE BMS, **Modbus RTU, 9600 baud, slave 1**. RJ45 pinout from
+the LP1600 manual: **pin 1 = RS485-B, pin 2 = RS485-A, pin 3 = GND** (pins 7/8
+carry A/B as well, 6 is a second ground). On a T-568B patch lead that is
+orange-white to B, orange to A, green-white to GND.
+
+Set `BATTERY_DEVICE` to the adapter's `/dev/serial/by-path` entry to enable it.
+Use by-path, not by-id: CH340 adapters carry no serial number, so two of them
+are indistinguishable by id.
+
+| Register | Meaning |
+| --- | --- |
+| 0 | pack current, ×0.01 A — **negative is discharging**, the opposite of the inverter's `bat_amps` |
+| 1 | pack voltage, ×0.01 V |
+| 2 | **SOC %** |
+| 3 | SOH % |
+| 4 | remaining capacity, ×0.01 Ah |
+| 5, 6 | full / design capacity, ×0.01 Ah |
+| 7 | cycle count |
+| 15–22 | eight cell voltages, mV |
+| 31, 32 | temperatures, ×0.1 °C |
+
+Confirmed on hardware by sampling three times 25s apart: current, voltage,
+remaining capacity and all eight cells moved; SOC, SOH, cycles, rated capacity
+and the limits held. Two independent cross-checks: the eight cells sum to the
+reported pack voltage, and SOC × design capacity matches remaining capacity.
+
+Written as `bms_*` fields, plus `bms_cell_delta` — the spread between highest
+and lowest cell, which widens long before a pack fails outright.
+
+The BMS is read independently of the inverter. Either can fail without taking
+the other down; when the inverter is unreachable the point carries only `bms_*`
+fields and the `state` tag reads `NoComms`.
 
 ## Finding undocumented registers (battery SOC)
 

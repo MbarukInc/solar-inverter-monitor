@@ -36,6 +36,10 @@ services:
       # Empty in normal operation. Set to a comma-separated register list
       # to record those raw as reg_<address> fields.
       DEBUG_REGISTERS: "${DEBUG_REGISTERS:-}"
+      # by-path of the RS485 adapter on the battery BMS. Empty disables it.
+      BATTERY_DEVICE: "${BATTERY_DEVICE:-}"
+      BMS_SLAVE_ID: "${BMS_SLAVE_ID:-1}"
+      BMS_BAUD_RATE: "${BMS_BAUD_RATE:-9600}"
       SAMPLE_INTERVAL: "${SAMPLE_INTERVAL:-30}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
     # The daemon logs a line per sample. Without rotation that grows without

@@ -17,7 +17,7 @@ from influxdb import InfluxDBClient
 from influxdb.exceptions import InfluxDBClientError, InfluxDBServerError
 from requests.exceptions import RequestException
 
-from ups import UPS, must_pv1800  # must_ep3000,  must_ph18_5248
+from ups import UPS, must_bms, must_pv1800  # must_ep3000,  must_ph18_5248
 
 SUPPORTED_INVERTERS = {
     "must-pv1800": must_pv1800.MustPV1800
@@ -31,6 +31,10 @@ DB_USERNAME = os.environ.get("DB_USERNAME", "root")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "root")
 DB_NAME = os.environ.get("DB_NAME", "ups")
 INVERTER_MODEL = os.environ.get("INVERTER_MODEL", "must-pv1800")
+
+# Path to the battery BMS adapter, e.g. a /dev/serial/by-path entry. Empty
+# disables battery reading entirely, which is the default.
+BATTERY_DEVICE = os.environ.get("BATTERY_DEVICE", "")
 
 # Seconds between samples. The cron version was locked to 60.
 SAMPLE_INTERVAL = float(os.environ.get("SAMPLE_INTERVAL", "30"))
@@ -68,7 +72,47 @@ def implausible(sample) -> list:
     return problems
 
 
-def build_point(sample) -> dict:
+def battery_fields(battery) -> dict:
+    """BMS readings, prefixed so they cannot collide with inverter fields."""
+    if battery is None:
+        return {}
+    fields = {
+        "bms_soc": int(battery.soc),
+        "bms_soh": int(battery.soh),
+        "bms_current": float(battery.current),
+        "bms_voltage": float(battery.voltage),
+        "bms_remaining_ah": float(battery.remaining_ah),
+        "bms_full_ah": float(battery.full_ah),
+        "bms_cycles": int(battery.cycles),
+        "bms_temp_1": float(battery.temp_1),
+        "bms_temp_2": float(battery.temp_2),
+        "bms_cell_min": float(battery.cell_min),
+        "bms_cell_max": float(battery.cell_max),
+        # The single most useful derived number: cell spread widens long before
+        # a pack fails outright.
+        "bms_cell_delta": float(battery.cell_delta),
+    }
+    for n, volts in enumerate(battery.cells, start=1):
+        fields["bms_cell_{0:02d}".format(n)] = float(volts)
+    return fields
+
+
+def build_point(sample, battery=None) -> dict:
+    """One point per cycle, carrying whatever was read successfully.
+
+    The inverter and the BMS are separate devices on separate adapters, and one
+    can fail while the other works -- the inverter link was dead for a day while
+    the battery answered fine. So `sample` may be None, in which case the point
+    carries only BMS fields and the state tag records that the inverter was
+    unreachable rather than inventing a status.
+    """
+    if sample is None:
+        return {
+            "measurement": "logs",
+            "tags": {"host": INVERTER_MODEL, "state": "NoComms"},
+            "time": datetime.now(timezone.utc).isoformat(),
+            "fields": battery_fields(battery),
+        }
     # Raw debug registers ride alongside as reg_<address>. Integers, so they
     # cannot collide in type with anything already written.
     extra_fields = {"reg_{0}".format(a): int(v) for a, v in sample.extra.items()}
@@ -101,6 +145,7 @@ def build_point(sample) -> dict:
             "gridVoltage": sample.gridvoltage,
             "gridCurrent": sample.gridcurrent,
             **extra_fields,
+            **battery_fields(battery),
         }
     }
 
@@ -137,11 +182,47 @@ def main() -> int:
         log.exception("could not open %s", USB_DEVICE)
         return 1
 
+    battery_reader = None
+    if BATTERY_DEVICE:
+        try:
+            battery_reader = must_bms.MustBMS(BATTERY_DEVICE)
+            log.info("also reading the battery BMS on %s", BATTERY_DEVICE)
+        except Exception:
+            log.exception("could not open the BMS on %s; continuing without it",
+                          BATTERY_DEVICE)
+    else:
+        log.info("BATTERY_DEVICE unset; not reading the BMS")
+
     consecutive_failures = 0
     last_failure = None
+    battery_failure = None
 
     while not shutdown.is_set():
         started = datetime.now(timezone.utc)
+
+        # Read the BMS first and independently. The two devices fail
+        # separately: the inverter link was down for a day while the battery
+        # answered normally, and losing SOC because the inverter is mute would
+        # be the wrong trade.
+        battery = None
+        if battery_reader is not None:
+            try:
+                battery = battery_reader.sample()
+            except Exception as exc:
+                signature = "{0}: {1}".format(type(exc).__name__, exc)
+                if signature != battery_failure:
+                    log.exception("BMS read failed")
+                    battery_failure = signature
+                else:
+                    log.warning("BMS read failed (unchanged): %s", signature)
+                try:
+                    battery_reader.reconnect()
+                except Exception:
+                    pass
+            else:
+                if battery_failure is not None:
+                    log.info("BMS recovered")
+                    battery_failure = None
 
         try:
             sample = inverter.sample()
@@ -167,6 +248,14 @@ def main() -> int:
                 except Exception as reconnect_exc:
                     log.warning("reconnect failed, retrying next cycle: %s",
                                 reconnect_exc)
+            if battery is not None:
+                log.info("Battery: SOC %d%%, %.2fV, %.2fA, cell spread %.3fV",
+                         battery.soc, battery.voltage, battery.current,
+                         battery.cell_delta)
+                try:
+                    client.write_points([build_point(None, battery)])
+                except (InfluxDBClientError, InfluxDBServerError, RequestException):
+                    log.exception("write to InfluxDB failed, BMS sample dropped")
         else:
             if last_failure is not None:
                 log.info("recovered after %d failed samples", consecutive_failures)
@@ -175,7 +264,11 @@ def main() -> int:
             for problem in implausible(sample):
                 log.warning("implausible reading, check the decode: %s", problem)
             log.info("Measured: %s", sample)
-            point = build_point(sample)
+            if battery is not None:
+                log.info("Battery: SOC %d%%, %.2fV, %.2fA, cell spread %.3fV",
+                         battery.soc, battery.voltage, battery.current,
+                         battery.cell_delta)
+            point = build_point(sample, battery)
             # A database outage must not cost us the next sample too, so the
             # write gets its own guard.
             try:
