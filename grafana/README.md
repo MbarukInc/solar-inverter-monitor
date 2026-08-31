@@ -21,9 +21,19 @@ Every panel reads measurement `logs` in database `ups`:
 | `accDischargerPower` | Total Power Generated |
 | `inverterState` | Inverter State |
 | `temp` | Temperature |
+| `bms_soc` | Battery SOC (gauge), Battery SOC & Capacity |
+| `bms_remaining_ah` | Battery SOC & Capacity |
+| `bms_cell_01`..`bms_cell_08`, `bms_cell_delta` | Cell Voltages |
 
 Not currently shown, though collected: `ac`, `gridState`, `radiatorTemp`,
-`pvBattVoltage`, `accLoadPower`, `accSelfusePower`.
+`pvBattVoltage`, `accLoadPower`, `accSelfusePower`, `bms_soh`, `bms_cycles`,
+`bms_current`, `bms_voltage`, `bms_temp_1/2`, `bms_full_ah`.
+
+The `bms_*` fields come from the battery BMS over its own RS485 link, not from
+the inverter — the inverter has no SOC register at all. They are written even
+when the inverter is unreachable, in which case the `state` tag reads
+`NoComms` and no inverter fields are present, so panels on those fields will
+show gaps while the SOC panels keep working.
 
 ## Updating
 
