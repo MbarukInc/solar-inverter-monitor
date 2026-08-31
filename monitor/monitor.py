@@ -176,12 +176,6 @@ def main() -> int:
     client = InfluxDBClient(DB_HOST, DB_PORT, DB_USERNAME, DB_PASSWORD,
                             DB_NAME, timeout=10, retries=3)
 
-    try:
-        inverter: UPS = SUPPORTED_INVERTERS[INVERTER_MODEL](USB_DEVICE)
-    except Exception:
-        log.exception("could not open %s", USB_DEVICE)
-        return 1
-
     battery_reader = None
     if BATTERY_DEVICE:
         try:
@@ -192,6 +186,22 @@ def main() -> int:
                           BATTERY_DEVICE)
     else:
         log.info("BATTERY_DEVICE unset; not reading the BMS")
+
+    # Opening the inverter is only fatal when it is the sole data source.
+    # With a BMS configured, a dead inverter link must not stop battery
+    # readings -- the whole point of reading them on a separate adapter. The
+    # first version of this exited 1 here and left the container restart-looping
+    # while the battery sat there answering perfectly.
+    inverter = None
+    try:
+        inverter = SUPPORTED_INVERTERS[INVERTER_MODEL](USB_DEVICE)
+    except Exception:
+        if battery_reader is None:
+            log.exception("could not open %s, and no BATTERY_DEVICE is set",
+                          USB_DEVICE)
+            return 1
+        log.exception("could not open %s; running on the BMS alone and "
+                      "retrying the inverter each cycle", USB_DEVICE)
 
     consecutive_failures = 0
     last_failure = None
@@ -224,8 +234,22 @@ def main() -> int:
                     log.info("BMS recovered")
                     battery_failure = None
 
+        if inverter is None:
+            # Inverter was unopenable at startup. Keep trying so it rejoins on
+            # its own once the adapter or the inverter comes back.
+            try:
+                inverter = SUPPORTED_INVERTERS[INVERTER_MODEL](USB_DEVICE)
+                log.info("inverter link opened")
+            except Exception as exc:
+                signature = "{0}: {1}".format(type(exc).__name__, exc)
+                if signature != last_failure:
+                    log.warning("inverter still unavailable: %s", signature)
+                    last_failure = signature
+
         try:
-            sample = inverter.sample()
+            sample = inverter.sample() if inverter is not None else None
+            if sample is None:
+                raise RuntimeError("inverter unavailable")
         except Exception as exc:
             consecutive_failures += 1
             # The adapter is powered from the inverter, so an inverter outage
