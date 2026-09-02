@@ -2,8 +2,17 @@ name: Build_Container
 
 on:
   workflow_dispatch:
+    inputs:
+      target:
+        description: Which host to rebuild
+        type: choice
+        default: all
+        options:
+          - all
+          - inverter
+          - bms
 
-# Both workflows deploy to the same Pi, so they share one concurrency group and
+# Both workflows deploy to the same Pis, so they share one concurrency group and
 # queue behind each other. Observed the alternative: a merge and a manual
 # dispatch each got their own runner pod and ran `docker compose up -d --build`
 # against the same host at the same time.
@@ -16,34 +25,90 @@ concurrency:
 
 jobs:
   deploy:
+    name: deploy (${{ matrix.target }})
     # An ARC runner scale set matches on its name alone -- the [self-hosted, x]
     # array form never matches one, and the job just sits queued. A classic
     # runner labelled 'mbarukville' also matches this, so the old Mac runner
     # remains a valid fallback.
     runs-on: mbarukville
+    strategy:
+      # The inverter and the BMS are independent sources on separate machines.
+      # One host being unreachable must not cancel the other's deploy.
+      fail-fast: false
+      matrix:
+        include:
+          # The inverter host. battery_device_var points at BATTERY_DEVICE,
+          # which is deliberately left unset: the inverter's built-in USB
+          # serial interface and the battery's RS485 adapter cannot share a
+          # host. That was reproduced on both Pis, and the inverter is always
+          # the one that stops answering, so each machine reads one device.
+          - target: inverter
+            host_secret: RASPBERRY_PI_IP
+            path_secret: SOLAR_APP_PATH
+            usb_device_var: USB_DEVICE
+            battery_device_var: BATTERY_DEVICE
+            db_host_var: DB_HOST
+          # The BMS host. BMS_USB_DEVICE names a by-path that deliberately does
+          # not exist, so opening the inverter fails and monitor.py falls back
+          # to reading the battery alone. Leaving it unset would default to
+          # /dev/ttyUSB0 and point the inverter reader straight at the BMS
+          # adapter at the wrong baud rate.
+          - target: bms
+            host_secret: BMS_PI_IP
+            path_secret: BMS_APP_PATH
+            usb_device_var: BMS_USB_DEVICE
+            battery_device_var: BMS_BATTERY_DEVICE
+            db_host_var: BMS_DB_HOST
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    # Skips are announced rather than silent. An unconfigured target should not
+    # fail the whole run, but a quiet skip is the exact failure mode that hid
+    # USB_DEVICE and DEBUG_REGISTERS being unplumbed for weeks.
+    - name: Check whether this target should run
+      id: configured
+      shell: bash
+      env:
+        PI_HOST: ${{ secrets[matrix.host_secret] }}
+        TARGET: ${{ matrix.target }}
+        SELECTED: ${{ github.event.inputs.target }}
+      run: |
+        selected="${SELECTED:-all}"
+        if [ "$selected" != "all" ] && [ "$selected" != "$TARGET" ]; then
+          echo "::notice::$TARGET: not selected for this run ($selected) -- skipping."
+          echo "run=false" >> "$GITHUB_OUTPUT"
+        elif [ -z "${PI_HOST:-}" ]; then
+          echo "::notice::$TARGET: secret ${{ matrix.host_secret }} is not set -- skipping."
+          echo "run=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "$TARGET: deploying."
+          echo "run=true" >> "$GITHUB_OUTPUT"
+        fi
+
     # Deploy logic lives in one place so the two workflows cannot drift apart
     # the way they did when each carried its own copy of the rsync and ssh steps.
     - name: Deploy to Raspberry Pi
+      if: steps.configured.outputs.run == 'true'
       uses: ./.github/actions/deploy-to-pi
       with:
-        pi_host: ${{ secrets.RASPBERRY_PI_IP }}
-        app_path: ${{ secrets.SOLAR_APP_PATH }}
-        db_host: ${{ vars.DB_HOST }}
+        pi_host: ${{ secrets[matrix.host_secret] }}
+        app_path: ${{ secrets[matrix.path_secret] }}
+        # Per-target override falling back to the shared value: the BMS host
+        # reaches InfluxDB by address because its resolver order cannot be
+        # relied on for the internal name.
+        db_host: ${{ vars[matrix.db_host_var] || vars.DB_HOST }}
         db_port: ${{ vars.DB_PORT }}
         db_name: ${{ vars.DB_NAME }}
         db_username: ${{ secrets.DB_USERNAME }}
         db_password: ${{ secrets.DB_PASSWORD }}
         sample_interval: ${{ vars.SAMPLE_INTERVAL }}
         log_level: ${{ vars.LOG_LEVEL }}
-        usb_device: ${{ vars.USB_DEVICE }}
+        usb_device: ${{ vars[matrix.usb_device_var] }}
         modbus_slave_id: ${{ vars.MODBUS_SLAVE_ID }}
         modbus_baud_rate: ${{ vars.MODBUS_BAUD_RATE }}
         debug_registers: ${{ vars.DEBUG_REGISTERS }}
-        battery_device: ${{ vars.BATTERY_DEVICE }}
+        battery_device: ${{ vars[matrix.battery_device_var] }}
         bms_slave_id: ${{ vars.BMS_SLAVE_ID }}
         bms_baud_rate: ${{ vars.BMS_BAUD_RATE }}
         ssh_private_key: ${{ secrets.PI_SSH_KEY }}

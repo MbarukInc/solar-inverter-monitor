@@ -20,7 +20,9 @@ Repository secrets (Settings → Secrets and variables → Actions → Secrets):
 | `RASPBERRY_PI_IP` | already configured |
 | `SOLAR_APP_PATH` | already configured |
 | `PI_SSH_KEY` | Private deploy key for `pi@<RASPBERRY_PI_IP>` |
-| `PI_KNOWN_HOSTS` | `ssh-keyscan -H <PI_IP>` output for that host |
+| `PI_KNOWN_HOSTS` | `ssh-keyscan -H <PI_IP>` output for **every** deploy host |
+| `BMS_PI_IP` | Host running the battery reader. Unset skips that target entirely |
+| `BMS_APP_PATH` | Absolute path to the checkout on the BMS host |
 
 `PI_SSH_KEY` and `PI_KNOWN_HOSTS` live here rather than being mounted into the
 runner because the runner is shared across the org — a key baked into the pod
@@ -40,6 +42,9 @@ rest fall back to the defaults in `docker-compose.yml` when unset:
 | `USB_DEVICE` | `/dev/ttyUSB0` |
 | `MODBUS_SLAVE_ID` | `4` |
 | `MODBUS_BAUD_RATE` | `19200` |
+| `BMS_USB_DEVICE` | *(unset)* — see below |
+| `BMS_BATTERY_DEVICE` | *(unset)* — `by-path` of the BMS adapter |
+| `BMS_DB_HOST` | falls back to `DB_HOST` |
 
 Rotating the InfluxDB password means updating the secret and re-running
 `Build_Container` — no SSH to the Pi required. The workflow fails before it
@@ -173,6 +178,41 @@ from a repository variable in both workflows. Miss one and setting the variable
 does nothing, silently — which has happened twice (`USB_DEVICE` was hardcoded
 past its own variable, `DEBUG_REGISTERS` was absent from all three deploy
 layers). This script cross-references them and exits non-zero on a gap.
+
+## Two hosts, one device each
+
+The inverter and the battery are read by **separate Pis**, and that is not a
+convenience — the two adapters cannot share a host.
+
+Plugging both into one machine leaves the battery working and the inverter
+mute: its port returns a continuously low line (~110 bytes/s of `0x00`,
+where a healthy idle RS485 line yields zero) and answers no Modbus at any baud.
+Removing either adapter restores the other. Reproduced on both a Pi Model B+
+and a Pi 4, on every USB port and both socket types, with autosuspend off and
+a fresh `ch341` bind. The inverter is always the one that fails.
+
+The likeliest cause is a ground loop rather than current draw: the inverter's
+USB-serial chip is *inside* the mains-referenced inverter, while the battery
+adapter is referenced to the pack's negative terminal, so one host bridges the
+two grounds. A powered hub does not address that; a USB isolator on the battery
+link would. Until then, one device per host.
+
+Deploys are a matrix over two targets:
+
+| Target | Reads | Configured by |
+| --- | --- | --- |
+| `inverter` | inverter over Modbus | `RASPBERRY_PI_IP`, `SOLAR_APP_PATH`, `USB_DEVICE` |
+| `bms` | battery BMS only | `BMS_PI_IP`, `BMS_APP_PATH`, `BMS_BATTERY_DEVICE` |
+
+`BMS_USB_DEVICE` must name a `by-path` that **does not exist** (for example
+`/dev/serial/by-path/no-inverter-on-this-host`). Opening it then fails and
+`monitor.py` falls back to reading the battery alone. Leaving it unset is worse
+than useless: `docker-compose.yml` defaults it to `/dev/ttyUSB0`, which is the
+BMS adapter, and the inverter reader would hammer it at the wrong baud rate.
+
+`Build_Container` takes a **target** input (`all`, `inverter`, `bms`) so one
+host can be rebuilt without touching the other. A target whose host secret is
+unset is skipped with a notice rather than failing the run.
 
 ## Battery BMS (state of charge)
 
