@@ -32,6 +32,19 @@ DB_PASSWORD = os.environ.get("DB_PASSWORD", "root")
 DB_NAME = os.environ.get("DB_NAME", "ups")
 INVERTER_MODEL = os.environ.get("INVERTER_MODEL", "must-pv1800")
 
+# InfluxDB `host` tag. Defaults to the model so existing series keep their tag.
+# A battery-only instance must override it: when two writers share one tag,
+# `GROUP BY state` returns the battery reader's rows interleaved with the
+# inverter's, and no query can tell the two hosts apart.
+HOST_TAG = os.environ.get("HOST_TAG", INVERTER_MODEL)
+
+# This host has a BMS and no inverter. Without it the inverter reader falls
+# back to docker-compose's /dev/ttyUSB0 default -- which is the BMS adapter --
+# and drives it at the wrong baud rate. The previous workaround was pointing
+# USB_DEVICE at a deliberately absent path, which then logged a failed sample
+# every cycle and tagged every battery point as an inverter outage.
+BMS_ONLY = os.environ.get("BMS_ONLY", "").strip().lower() in ("1", "true", "yes", "on")
+
 # Path to the battery BMS adapter, e.g. a /dev/serial/by-path entry. Empty
 # disables battery reading entirely, which is the default.
 BATTERY_DEVICE = os.environ.get("BATTERY_DEVICE", "")
@@ -103,13 +116,16 @@ def build_point(sample, battery=None) -> dict:
     The inverter and the BMS are separate devices on separate adapters, and one
     can fail while the other works -- the inverter link was dead for a day while
     the battery answered fine. So `sample` may be None, in which case the point
-    carries only BMS fields and the state tag records that the inverter was
-    unreachable rather than inventing a status.
+    carries only BMS fields and the state tag records why, rather than
+    inventing a status: `BmsOnly` when this host has no inverter by design,
+    `NoComms` when one is configured but unreachable. Those are different
+    events and a query has to be able to tell them apart.
     """
     if sample is None:
         return {
             "measurement": "logs",
-            "tags": {"host": INVERTER_MODEL, "state": "NoComms"},
+            "tags": {"host": HOST_TAG,
+                     "state": "BmsOnly" if BMS_ONLY else "NoComms"},
             "time": datetime.now(timezone.utc).isoformat(),
             "fields": battery_fields(battery),
         }
@@ -119,7 +135,7 @@ def build_point(sample, battery=None) -> dict:
     return {
         "measurement": "logs",
         "tags": {
-            "host": INVERTER_MODEL,
+            "host": HOST_TAG,
             "state": sample.state
         },
         "time": datetime.now(timezone.utc).isoformat(),
@@ -166,12 +182,18 @@ def main() -> int:
                   INVERTER_MODEL, ", ".join(sorted(SUPPORTED_INVERTERS)))
         return 1
 
+    if BMS_ONLY and not BATTERY_DEVICE:
+        log.error("BMS_ONLY is set but BATTERY_DEVICE is empty -- "
+                  "this instance would read nothing at all.")
+        return 1
+
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
 
-    log.info("polling %s on %s every %.0fs, writing to %s:%d/%s",
-             INVERTER_MODEL, USB_DEVICE, SAMPLE_INTERVAL,
-             DB_HOST, DB_PORT, DB_NAME)
+    log.info("polling %s on %s every %.0fs, writing to %s:%d/%s as host=%s",
+             "BMS only" if BMS_ONLY else INVERTER_MODEL,
+             BATTERY_DEVICE if BMS_ONLY else USB_DEVICE, SAMPLE_INTERVAL,
+             DB_HOST, DB_PORT, DB_NAME, HOST_TAG)
 
     client = InfluxDBClient(DB_HOST, DB_PORT, DB_USERNAME, DB_PASSWORD,
                             DB_NAME, timeout=10, retries=3)
@@ -193,15 +215,18 @@ def main() -> int:
     # first version of this exited 1 here and left the container restart-looping
     # while the battery sat there answering perfectly.
     inverter = None
-    try:
-        inverter = SUPPORTED_INVERTERS[INVERTER_MODEL](USB_DEVICE)
-    except Exception:
-        if battery_reader is None:
-            log.exception("could not open %s, and no BATTERY_DEVICE is set",
-                          USB_DEVICE)
-            return 1
-        log.exception("could not open %s; running on the BMS alone and "
-                      "retrying the inverter each cycle", USB_DEVICE)
+    if BMS_ONLY:
+        log.info("BMS_ONLY set; no inverter is attached to this host")
+    else:
+        try:
+            inverter = SUPPORTED_INVERTERS[INVERTER_MODEL](USB_DEVICE)
+        except Exception:
+            if battery_reader is None:
+                log.exception("could not open %s, and no BATTERY_DEVICE is set",
+                              USB_DEVICE)
+                return 1
+            log.exception("could not open %s; running on the BMS alone and "
+                          "retrying the inverter each cycle", USB_DEVICE)
 
     consecutive_failures = 0
     last_failure = None
@@ -234,7 +259,7 @@ def main() -> int:
                     log.info("BMS recovered")
                     battery_failure = None
 
-        if inverter is None:
+        if inverter is None and not BMS_ONLY:
             # Inverter was unopenable at startup. Keep trying so it rejoins on
             # its own once the adapter or the inverter comes back.
             try:
@@ -245,6 +270,22 @@ def main() -> int:
                 if signature != last_failure:
                     log.warning("inverter still unavailable: %s", signature)
                     last_failure = signature
+
+        if BMS_ONLY:
+            # No inverter here by design, so none of the failure machinery
+            # below applies: it would log a failed sample every cycle and tag
+            # each battery point as an outage.
+            if battery is not None:
+                log.info("Battery: SOC %d%%, %.2fV, %.2fA, cell spread %.3fV",
+                         battery.soc, battery.voltage, battery.current,
+                         battery.cell_delta)
+                try:
+                    client.write_points([build_point(None, battery)])
+                except (InfluxDBClientError, InfluxDBServerError, RequestException):
+                    log.exception("write to InfluxDB failed, BMS sample dropped")
+            elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+            shutdown.wait(max(0.0, SAMPLE_INTERVAL - elapsed))
+            continue
 
         try:
             sample = inverter.sample() if inverter is not None else None
