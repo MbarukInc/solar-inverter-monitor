@@ -45,6 +45,8 @@ rest fall back to the defaults in `docker-compose.yml` when unset:
 | `BMS_USB_DEVICE` | *(unset)* — see below |
 | `BMS_BATTERY_DEVICE` | *(unset)* — `by-path` of the BMS adapter |
 | `BMS_DB_HOST` | falls back to `DB_HOST` |
+| `HOST_TAG` | falls back to the inverter model |
+| `BMS_HOST_TAG` | InfluxDB `host` tag for the BMS host |
 
 Rotating the InfluxDB password means updating the secret and re-running
 `Build_Container` — no SSH to the Pi required. The workflow fails before it
@@ -86,6 +88,8 @@ itself.
 | `MODBUS_SLAVE_ID` | `4` | Only change if `probe.py --scan` finds another |
 | `MODBUS_BAUD_RATE` | `19200` | Same |
 | `BATTERY_DEVICE` | unset | by-path of the RS485 adapter on the battery BMS; empty disables it |
+| `HOST_TAG` | `INVERTER_MODEL` | InfluxDB `host` tag. Override on a second writer |
+| `BMS_ONLY` | unset | `true` on a host with a BMS and no inverter; points are tagged `BmsOnly` |
 | `BMS_SLAVE_ID` | `1` | BMS Modbus slave id |
 | `BMS_BAUD_RATE` | `9600` | BMS baud rate |
 | `LOG_LEVEL` | `INFO` | `DEBUG` for more detail |
@@ -204,11 +208,23 @@ Deploys are a matrix over two targets:
 | `inverter` | inverter over Modbus | `RASPBERRY_PI_IP`, `SOLAR_APP_PATH`, `USB_DEVICE` |
 | `bms` | battery BMS only | `BMS_PI_IP`, `BMS_APP_PATH`, `BMS_BATTERY_DEVICE` |
 
-`BMS_USB_DEVICE` must name a `by-path` that **does not exist** (for example
-`/dev/serial/by-path/no-inverter-on-this-host`). Opening it then fails and
-`monitor.py` falls back to reading the battery alone. Leaving it unset is worse
-than useless: `docker-compose.yml` defaults it to `/dev/ttyUSB0`, which is the
-BMS adapter, and the inverter reader would hammer it at the wrong baud rate.
+The BMS host sets **`BMS_ONLY=true`**, which makes `monitor.py` skip the
+inverter entirely rather than trying and failing. Without it the inverter
+reader takes `docker-compose.yml`'s `/dev/ttyUSB0` default — which *is* the BMS
+adapter — and drives it at the wrong baud rate. (`BMS_USB_DEVICE` naming an
+absent path is kept as a belt-and-braces fallback should `BMS_ONLY` ever be
+unset.)
+
+Each host also needs its **own `host` tag**. Both write to the same
+`logs` measurement, so sharing one tag makes the two writers inseparable:
+`GROUP BY state` returns the battery reader's rows interleaved with the
+inverter's, and no query can filter to one host. Set `BMS_HOST_TAG` on the BMS
+host; the inverter host falls back to the model name, so its existing series
+are unaffected.
+
+The `state` tag on a battery-only point is **`BmsOnly`**, not `NoComms`. Those
+are different events — one host has no inverter by design, the other has one
+that stopped answering — and a query has to be able to tell them apart.
 
 `Build_Container` takes a **target** input (`all`, `inverter`, `bms`) so one
 host can be rebuilt without touching the other. A target whose host secret is
