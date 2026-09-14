@@ -41,6 +41,9 @@ jobs:
             usb_device_var: USB_DEVICE
             battery_device_var: BATTERY_DEVICE
             db_host_var: DB_HOST
+            host_tag_var: HOST_TAG
+            bms_only: ""
+
           # The BMS host. BMS_USB_DEVICE names a by-path that deliberately does
           # not exist, so opening the inverter fails and monitor.py falls back
           # to reading the battery alone. Leaving it unset would default to
@@ -52,6 +55,8 @@ jobs:
             usb_device_var: BMS_USB_DEVICE
             battery_device_var: BMS_BATTERY_DEVICE
             db_host_var: BMS_DB_HOST
+            host_tag_var: BMS_HOST_TAG
+            bms_only: "true"
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -101,6 +106,8 @@ jobs:
         modbus_slave_id: ${{ vars.MODBUS_SLAVE_ID }}
         modbus_baud_rate: ${{ vars.MODBUS_BAUD_RATE }}
         debug_registers: ${{ vars.DEBUG_REGISTERS }}
+        host_tag: ${{ vars[matrix.host_tag_var] }}
+        bms_only: ${{ matrix.bms_only }}
         battery_device: ${{ vars[matrix.battery_device_var] }}
         bms_slave_id: ${{ vars.BMS_SLAVE_ID }}
         bms_baud_rate: ${{ vars.BMS_BAUD_RATE }}
