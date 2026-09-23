@@ -36,7 +36,11 @@ INVERTER_MODEL = os.environ.get("INVERTER_MODEL", "must-pv1800")
 # A battery-only instance must override it: when two writers share one tag,
 # `GROUP BY state` returns the battery reader's rows interleaved with the
 # inverter's, and no query can tell the two hosts apart.
-HOST_TAG = os.environ.get("HOST_TAG", INVERTER_MODEL)
+# `or`, not a default: docker-compose.yml passes HOST_TAG through as
+# "${HOST_TAG:-}", so the variable is always *present* and merely empty when
+# unset. os.environ.get's default never fires, and the inverter host wrote
+# points with an empty host tag for ten days.
+HOST_TAG = os.environ.get("HOST_TAG") or INVERTER_MODEL
 
 # This host has a BMS and no inverter. Without it the inverter reader falls
 # back to docker-compose's /dev/ttyUSB0 default -- which is the BMS adapter --
