@@ -170,6 +170,37 @@ The dashboard lives in [`grafana/`](grafana/), tracked alongside the code that
 produces the fields it queries. See that directory's README for the panel/field
 map and for why exports are normalised before committing.
 
+## Running on the cluster instead of the Pis
+
+The plan is for both readers to become pods on `mbarukville-02`, so the two Pis
+can be retired. The manifests live in `MbarukInc/homelab-infra`
+(`solarmonitoring/solar-monitor.yaml`), and this repo's job shrinks to building
+the image.
+
+A pod cannot build its own image the way each Pi did with
+`docker compose up -d --build`, so `Publish_Image`
+([`.github/workflows/publish_image.yml`](.github/workflows/publish_image.yml))
+builds it on a GitHub-hosted runner and pushes it to
+`ghcr.io/mbarukinc/solar-inverter-monitor`. It runs on pushes to `main` that
+touch `monitor/`, and on demand.
+
+It does **not** run on the `mbarukville` runners: those are ARC pods with no
+Docker daemon, so they cannot build images. It also never touches the home LAN.
+
+Deploying is then two steps, both by hand and on purpose -- the same digest pin
+every other image in that repo gets:
+
+1. The workflow's summary prints the exact `image:` line, tag and digest.
+2. Paste it into `solarmonitoring/solar-monitor.yaml`, both Deployments, and
+   apply.
+
+The package inherits this repo's visibility, so it is private and the cluster
+pulls it with a `ghcr-pull` secret holding a `read:packages` token.
+
+**The Pi deploy workflows stay until the Pis are actually gone.** `Build_Container`
+and `Deploy_Latest_code` still own whatever is still running on a Pi, and the
+constraint below is why at least one of them will be for a while.
+
 ## Checking configuration is actually deliverable
 
 ```bash
