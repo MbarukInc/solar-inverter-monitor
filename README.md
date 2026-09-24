@@ -1,64 +1,41 @@
 # solar-inverter-monitor
 
 Polls a MUST PV18-series solar inverter (currently a **PV18-3224 VPM II**;
-previously a PV18-3024 VPM) over Modbus RTU and writes samples to InfluxDB. Runs as a Docker container on a
-Raspberry Pi with the inverter's RS485/USB adapter on `/dev/ttyUSB0`.
+previously a PV18-3024 VPM) over Modbus RTU, and its MUST LP16 battery's BMS
+over RS485, and writes samples to InfluxDB.
+
+It runs as two pods on the home cluster's `mbarukville-02` node, one per device,
+with both USB adapters plugged into that node. The manifests live in
+`MbarukInc/homelab-infra` (`solarmonitoring/solar-inverter.yaml`,
+`solar-bms.yaml`); this repo builds the image they run. Until 2026-09-24 each
+device had its own Raspberry Pi, for a reason that turned out to be one wire --
+see [Both devices on one host](#both-devices-on-one-host-no-ground-wire-on-the-battery-link).
 
 ## Configuration
 
-Settings come from repository **secrets** (sensitive) and **variables**
-(everything else). The deploy workflow renders them into `.env` on the Pi, so
-that is the only place to change them — editing `.env` on the Pi directly will
-be overwritten by the next deploy.
+The running readers are configured in `MbarukInc/homelab-infra`, not here:
 
-Repository secrets (Settings → Secrets and variables → Actions → Secrets):
+- **Settings** are `env` entries on each Deployment, in
+  `solarmonitoring/solar-inverter.yaml` and `solarmonitoring/solar-bms.yaml`.
+  Every variable the code reads is listed under
+  [Environment variables read by the container](#environment-variables-read-by-the-container).
+- **The InfluxDB credentials** are the `solar-influx` Secret in the
+  `solarmonitoring` namespace, keys `DB_USERNAME` and `DB_PASSWORD`. Rotating the
+  password means replacing that Secret and restarting both Deployments.
+- **The image pull** uses the `ghcr-pull` Secret, a `read:packages` token.
 
-| Secret | Notes |
-| --- | --- |
-| `DB_USERNAME` | InfluxDB username |
-| `DB_PASSWORD` | InfluxDB password |
-| `RASPBERRY_PI_IP` | unused since 2026-09-24: the inverter's Pi (`.13`) is retired |
-| `SOLAR_APP_PATH` | unused since 2026-09-24, as above |
-| `PI_SSH_KEY` | Private deploy key for `pi@<BMS_PI_IP>` |
-| `PI_KNOWN_HOSTS` | `ssh-keyscan -H <PI_IP>` output for **every** deploy host |
-| `BMS_PI_IP` | Host running the battery reader. Unset skips that target entirely |
-| `BMS_APP_PATH` | Absolute path to the checkout on the BMS host |
+Both Secrets are made by hand and documented in homelab-infra's README, under
+Secrets.
 
-`PI_SSH_KEY` and `PI_KNOWN_HOSTS` live here rather than being mounted into the
-runner because the runner is shared across the org — a key baked into the pod
-would let any repo in `MbarukInc` reach the Pi. Capture the host key from a
-machine you trust on the LAN; it is the trust anchor for every future deploy.
-
-Repository variables (same page → Variables). Only `DB_HOST` is required; the
-rest fall back to the defaults in `docker-compose.yml` when unset:
-
-| Variable | Default |
-| --- | --- |
-| `DB_HOST` | *(required)* |
-| `DB_PORT` | `8086` |
-| `DB_NAME` | `ups` |
-| `SAMPLE_INTERVAL` | `30` |
-| `LOG_LEVEL` | `INFO` |
-| `USB_DEVICE` | `/dev/ttyUSB0` |
-| `MODBUS_SLAVE_ID` | `4` |
-| `MODBUS_BAUD_RATE` | `19200` |
-| `BMS_USB_DEVICE` | *(unset)* — see below |
-| `BMS_BATTERY_DEVICE` | *(unset)* — `by-path` of the BMS adapter |
-| `BMS_DB_HOST` | falls back to `DB_HOST` |
-| `HOST_TAG` | falls back to the inverter model |
-| `BMS_HOST_TAG` | InfluxDB `host` tag for the BMS host |
-
-Rotating the InfluxDB password means updating the secret and re-running
-`Build_Container` — no SSH to the Pi required. The workflow fails before it
-touches the Pi if a required secret or variable is missing, and names it.
-
-Note that this is a convenience and provenance win, not a security one: the Pi
-still needs the values at container-create time, so they land on its disk as a
-plaintext `.env` (mode 600) either way.
+The repository secrets and variables that used to render `.env` on the Pis --
+`DB_HOST`, `USB_DEVICE`, `BMS_BATTERY_DEVICE`, `RASPBERRY_PI_IP`, `BMS_PI_IP`,
+`PI_SSH_KEY` and the rest -- drive nothing since the Pi deploy workflows were
+removed. They are left in place, not deleted, and can go whenever convenient.
 
 ### Manual setup
 
-For a fresh Pi or local testing, bring it up without the workflow:
+To run it outside the cluster -- for local testing, or on a spare machine with
+an adapter plugged in -- use docker-compose:
 
 ```bash
 cp .env.example .env
@@ -68,8 +45,7 @@ docker compose logs -f monitor
 ```
 
 Compose interpolates `.env` values, so a literal `$` in a hand-written password
-must be doubled (`pa$word` → `pa$$word`). The workflow handles that escaping
-itself.
+must be doubled (`pa$word` → `pa$$word`).
 
 ## Environment variables read by the container
 
@@ -111,18 +87,30 @@ An InfluxDB outage is logged and the sample dropped; it does not stop polling.
 
 ## Deployment
 
-Jobs run on the shared org runner (`runs-on: mbarukville`), an ARC runner scale
-set in the home MicroK8s cluster. That setup lives in its own repository, not
-here — see the runner repo for the cluster-side manifests.
+Two steps, and only the first is automatic:
 
-Pushing to `main` triggers `Deploy_Latest_code`; `Build_Container` does the same
-thing on demand. Both are thin wrappers around
-`.github/actions/deploy-to-pi`, which validates the configuration, rsyncs the
-repo, writes `.env`, and rebuilds — kept in one place so the two workflows
-cannot drift apart the way they previously did.
+1. **The image.** `Publish_Image`
+   ([`.github/workflows/publish_image.yml`](.github/workflows/publish_image.yml))
+   builds it on a GitHub-hosted runner and pushes it to
+   `ghcr.io/mbarukinc/solar-inverter-monitor`, on every push to `main` that
+   touches `monitor/`, and on demand. Its run summary prints the exact
+   `image: tag@sha256:digest` line.
+2. **The rollout.** Paste that line into both manifests in homelab-infra and
+   apply them. It is by hand on purpose, the same digest pin every other image
+   there gets.
 
-**The container no longer bind-mounts the source**, so a code change requires a
-rebuild — an rsync alone is no longer enough.
+The build runs on a GitHub-hosted runner, not the `mbarukville` runners:
+
+- those are ARC pods with no Docker daemon, so they cannot build images;
+- a hosted runner also never needs a way into the home LAN.
+
+The package inherits this repo's visibility, so it is private, and the cluster
+pulls it with the `ghcr-pull` Secret.
+
+There used to be two more workflows, `Deploy_Latest_code` and `Build_Container`,
+which rsynced this repo to each Pi, wrote `.env` there and ran
+`docker compose up -d --build`. They were removed on 2026-09-24 along with the
+last Pi target. Git history has them if a Pi ever comes back.
 
 ## After changing inverter, firmware or cabling
 
@@ -130,16 +118,32 @@ The PV18 models share one Modbus register map — the model number changes the V
 rating and battery voltage the readings land in, not the register addresses — so
 the driver is expected to carry over between PV18 units. Expected is not
 verified, though, and a swap is exactly when the link parameters and the map can
-move. Confirm with the bundled probe before trusting the data:
+move. Confirm with the bundled probe before trusting the data.
+
+Run these from a homelab-infra checkout. The image and device path are the ones in
+`solarmonitoring/solar-inverter.yaml`:
 
 ```bash
-docker compose stop monitor
-docker compose build monitor
-docker compose run --rm monitor python3 probe.py --nominal-va 3200
-docker compose start monitor
+./scripts/kubectl-remote.sh -n solarmonitoring scale deploy/solar-inverter --replicas=0
+./scripts/kubectl-remote.sh -n solarmonitoring run probe --rm -i --restart=Never \
+  --image='<image from solar-inverter.yaml>' --overrides='{"spec":{
+    "nodeSelector":{"kubernetes.io/hostname":"mbarukville-02"},
+    "tolerations":[{"key":"dedicated","operator":"Equal","value":"edge","effect":"NoSchedule"}],
+    "imagePullSecrets":[{"name":"ghcr-pull"}],
+    "containers":[{"name":"probe","image":"<image from solar-inverter.yaml>",
+      "securityContext":{"privileged":true},
+      "volumeMounts":[{"name":"dev","mountPath":"/dev"}],
+      "command":["python3","probe.py","--nominal-va","3200",
+                 "--device","<USB_DEVICE from solar-inverter.yaml>"]}],
+    "volumes":[{"name":"dev","hostPath":{"path":"/dev"}}]}}'
+./scripts/kubectl-remote.sh -n solarmonitoring scale deploy/solar-inverter --replicas=1
 ```
 
-Stop the daemon first. Neither pyserial nor minimalmodbus opens the port
+With docker-compose on a host outside the cluster, it is
+`docker compose run --rm monitor python3 probe.py --nominal-va 3200` with the
+daemon stopped.
+
+Stop the daemon first, either way. Neither pyserial nor minimalmodbus opens the port
 exclusively, so the probe and a running monitor would both hold
 `/dev/ttyUSB0` and corrupt each other's replies.
 
@@ -150,11 +154,8 @@ moved), whether the charger-power scale still matches `pvBattVoltage *
 pvChargeCurrent`, whether any state code is missing from `STATES`, and what VA
 rating the load percentage implies — a PV18-3224 should come out near 3200.
 
-If nothing answers, sweep the common link parameters:
-
-```bash
-docker compose run --rm monitor python3 probe.py --scan
-```
+If nothing answers, sweep the common link parameters by running the probe the
+same way with `--scan` in place of `--nominal-va 3200`.
 
 Set `MODBUS_SLAVE_ID` and `MODBUS_BAUD_RATE` to whatever it finds.
 
@@ -170,113 +171,79 @@ The dashboard lives in [`grafana/`](grafana/), tracked alongside the code that
 produces the fields it queries. See that directory's README for the panel/field
 map and for why exports are normalised before committing.
 
-## Running on the cluster instead of the Pis
-
-The plan is for both readers to become pods on `mbarukville-02`, so the two Pis
-can be retired. The manifests live in `MbarukInc/homelab-infra`
-(`solarmonitoring/solar-inverter.yaml`, `solar-bms.yaml`), and this repo's job shrinks to building
-the image.
-
-A pod cannot build its own image the way each Pi did with
-`docker compose up -d --build`, so `Publish_Image`
-([`.github/workflows/publish_image.yml`](.github/workflows/publish_image.yml))
-builds it on a GitHub-hosted runner and pushes it to
-`ghcr.io/mbarukinc/solar-inverter-monitor`. It runs on pushes to `main` that
-touch `monitor/`, and on demand.
-
-It does **not** run on the `mbarukville` runners: those are ARC pods with no
-Docker daemon, so they cannot build images. It also never touches the home LAN.
-
-Deploying is then two steps, both by hand and on purpose -- the same digest pin
-every other image in that repo gets:
-
-1. The workflow's summary prints the exact `image:` line, tag and digest.
-2. Paste it into `solarmonitoring/solar-inverter.yaml` (and `solar-bms.yaml`,
-   once that runs on the cluster), and apply.
-
-The package inherits this repo's visibility, so it is private and the cluster
-pulls it with a `ghcr-pull` secret holding a `read:packages` token.
-
-**The Pi deploy workflows stay until the Pis are actually gone.** `Build_Container`
-and `Deploy_Latest_code` still own whatever is still running on a Pi, and the
-constraint below is why at least one of them will be for a while.
-
 ## Checking configuration is actually deliverable
 
 ```bash
 python3 monitor/check_env_plumbing.py
 ```
 
-A setting has to appear in four places to work: read by the code, declared in
-`docker-compose.yml`, passed through `.github/actions/deploy-to-pi`, and mapped
-from a repository variable in both workflows. Miss one and setting the variable
-does nothing, silently — which has happened twice (`USB_DEVICE` was hardcoded
-past its own variable, `DEBUG_REGISTERS` was absent from all three deploy
-layers). This script cross-references them and exits non-zero on a gap.
+It checks that every variable the code reads is declared in
+`docker-compose.yml`, so that setting it in `.env` actually reaches the
+container. Compose is the one layer left where a setting can silently go
+nowhere, and that has happened twice:
 
-## Two hosts, one device each
+- `USB_DEVICE` was hardcoded past its own variable;
+- `DEBUG_REGISTERS` was never plumbed through at all.
 
-The inverter and the battery are read by **separate hosts**, and that is not a
-convenience — the two adapters cannot share a host. Since 2026-09-24 the
-inverter is read by a pod on the cluster node `mbarukville-02` (see
-[Running on the cluster instead of the Pis](#running-on-the-cluster-instead-of-the-pis))
-and the battery by the Pi 4; the Pi Model B+ at `.13` is retired.
+Until 2026-09-24 it also checked the Pi deploy action and workflows. On the
+cluster there is no such layer: an `env` entry on the Deployment reaches the
+process directly.
 
-Plugging both into one machine leaves the battery working and the inverter
-mute: its port returns a continuously low line (~110 bytes/s of `0x00`,
-where a healthy idle RS485 line yields zero) and answers no Modbus at any baud.
-Removing either adapter restores the other. Reproduced on both a Pi Model B+
-and a Pi 4, on every USB port and both socket types, with autosuspend off and
-a fresh `ch341` bind. The inverter is always the one that fails.
+## Both devices on one host: no ground wire on the battery link
 
-**Measured again on 2026-09-24 on `mbarukville-02`**, a mini PC, with the same
-result and the same ~118 bytes/s of `0x00`. That settled what the Pis alone
-could not:
+The inverter and the battery are read from **one host**, and that works only
+because the battery's RS485 cable carries **A and B, and no ground**.
 
-- **Not current draw.** That host has ample USB power. (The B+ really was
-  under-voltage, `throttled=0x50005`, but that was not the cause.)
-- **Not a USB or driver clash.** With the battery adapter deauthorized in sysfs
-  -- no driver, no device node, still cabled -- the inverter stayed mute.
+With the battery link's GND wired to the adapter (RJ45 pin 3, which this README
+used to tell you to connect), plugging both adapters into one machine leaves the
+battery working and the inverter mute:
 
-What is left is the physical connection: a ground loop. The inverter's
-USB-serial chip is *inside* the mains-referenced inverter, while the battery
-adapter is referenced to the pack's negative terminal, so one host bridges the
-two grounds. A powered hub does not address that; a USB isolator on the battery
-link would. Until then, one device per host.
+- its port returns a continuously low line, ~110 bytes/s of `0x00`, where a
+  healthy idle line yields nothing;
+- it answers no Modbus at any baud;
+- removing either adapter restores the other.
 
-The Pi deploys are now a matrix of one target, kept as a matrix so another Pi
-could be added back:
+That was reproduced on a Pi Model B+, on a Pi 4 (every port, autosuspend off, a
+fresh `ch341` bind) and on a mini PC. For three weeks it meant a separate
+Raspberry Pi per device.
 
-| Target | Reads | Configured by |
-| --- | --- | --- |
-| `bms` | battery BMS only | `BMS_PI_IP`, `BMS_APP_PATH`, `BMS_BATTERY_DEVICE` |
+The cause is a ground loop. The adapters are not isolated, so the adapter's
+RS485 GND terminal *is* the host's USB ground. Wiring it to the battery tied the
+pack's negative to the host, and through the host to the inverter, whose
+USB-serial chip sits inside a mains-connected box. Established on 2026-09-24:
 
-The `inverter` target was removed when the inverter moved to the cluster. Its
-secrets and variables (`RASPBERRY_PI_IP`, `SOLAR_APP_PATH`, `USB_DEVICE`,
-`HOST_TAG`) no longer drive anything; they were left in place rather than
-deleted.
+- **Not power:** the mini PC, with ample USB current, failed the same way. (The
+  Model B+ really was under-voltage, `throttled=0x50005`, but that was not the
+  cause.)
+- **Not software:** with the battery adapter deauthorized in sysfs -- no driver,
+  no device node, still cabled -- the inverter stayed mute.
+- **The wire:** with only the GND wire removed, both adapters read cleanly side
+  by side on one host.
+- **Harmless to remove:** the battery link lost nothing without it, 200 of 200
+  reads in a burst test. RS485 is differential, and the two sides sit close
+  enough in voltage for the transceivers without a shared reference.
 
-The BMS host sets **`BMS_ONLY=true`**, which makes `monitor.py` skip the
-inverter entirely rather than trying and failing. Without it the inverter
-reader takes `docker-compose.yml`'s `/dev/ttyUSB0` default — which *is* the BMS
-adapter — and drives it at the wrong baud rate. (`BMS_USB_DEVICE` naming an
-absent path is kept as a belt-and-braces fallback should `BMS_ONLY` ever be
-unset.)
+If the battery link ever turns flaky, the fix is an isolated USB-RS485 adapter,
+not reconnecting the ground.
 
-Each host also needs its **own `host` tag**. Both write to the same
-`logs` measurement, so sharing one tag makes the two writers inseparable:
-`GROUP BY state` returns the battery reader's rows interleaved with the
-inverter's, and no query can filter to one host. Set `BMS_HOST_TAG` on the BMS
-host; the inverter host falls back to the model name, so its existing series
-are unaffected.
+**Keep the two readers separate processes anyway**, as the two Deployments are.
+Each opens its own device at its own baud and slave id, and one failing never
+takes the other down:
 
-The `state` tag on a battery-only point is **`BmsOnly`**, not `NoComms`. Those
-are different events — one host has no inverter by design, the other has one
-that stopped answering — and a query has to be able to tell them apart.
-
-`Build_Container` takes a **target** input (`all`, `bms`) so one host can be
-rebuilt without touching another. A target whose host secret is
-unset is skipped with a notice rather than failing the run.
+- **The battery reader sets `BMS_ONLY=true`**, which makes `monitor.py` skip the
+  inverter entirely rather than trying and failing. Its `USB_DEVICE` also names
+  a path that deliberately does not exist, as a fallback: left at the default,
+  the inverter reader would pick up the battery's adapter and drive it at the
+  wrong baud rate.
+- **Each needs its own `host` tag.** Both write to the same `logs` measurement,
+  so a shared tag makes the two writers inseparable: `GROUP BY state` returns
+  the battery reader's rows interleaved with the inverter's, and no query can
+  filter to one of them. The battery reader sets `HOST_TAG=must-lp16-bms`; the
+  inverter reader falls back to the model name, so its series are the ones it
+  always had.
+- **The `state` tag on a battery-only point is `BmsOnly`**, not `NoComms`. Those
+  are different events -- one reader has no inverter by design, the other has
+  one that stopped answering -- and a query has to be able to tell them apart.
 
 ## Battery BMS (state of charge)
 
@@ -287,9 +254,13 @@ the BMS directly as a second device.
 MUST LP16-24200, PACE BMS, **Modbus RTU, 9600 baud, slave 1**. RJ45 pinout from
 the LP1600 manual: **pin 1 = RS485-B, pin 2 = RS485-A, pin 3 = GND** (pins 7/8
 carry A/B as well, 6 is a second ground). On a T-568B patch lead that is
-orange-white to B, orange to A, green-white to GND.
+**orange-white to B and orange to A -- and nothing else.** Leave green-white
+(pin 3) and green (pin 6) unconnected: wiring the ground mutes the inverter
+whenever both adapters share a host. See
+[Both devices on one host](#both-devices-on-one-host-no-ground-wire-on-the-battery-link).
 
-Set `BATTERY_DEVICE` to the adapter's `/dev/serial/by-path` entry to enable it.
+Set `BATTERY_DEVICE` to the adapter's `/dev/serial/by-path` entry to enable it
+(`solar-bms.yaml` does).
 Use by-path, not by-id: CH340 adapters carry no serial number, so two of them
 are indistinguishable by id.
 
@@ -329,9 +300,10 @@ If your battery's BMS is wired to the inverter over RS485/CAN **and** the
 inverter is configured for a lithium battery type, state of charge is likely
 sitting in an unlabelled register. To find it:
 
-```bash
-docker compose stop monitor && docker compose run --rm monitor python3 scan_registers.py --watch 5 && docker compose start monitor
-```
+Run it the way the probe is run under
+[After changing inverter, firmware or cabling](#after-changing-inverter-firmware-or-cabling),
+with `"command":["python3","scan_registers.py","--watch","5"]` and the inverter
+Deployment scaled to 0 meanwhile.
 
 It reads only, never writes. It lists every register holding a percentage-shaped
 value and, with `--watch`, drops the ones that never move. Compare the survivors

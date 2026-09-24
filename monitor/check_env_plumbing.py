@@ -1,10 +1,13 @@
-"""Check every env var the code reads is actually delivered to the container.
+"""Check every env var the code reads is declared in docker-compose.yml.
 
-Twice now a setting has been read by the code but never plumbed through
-docker-compose, the deploy action and the workflows -- so setting the
-repository variable did nothing, silently. USB_DEVICE was hardcoded past its
-own variable; DEBUG_REGISTERS was simply absent from all three. Both looked
-configured and were not.
+Twice a setting has been read by the code but never plumbed through, so
+setting it did nothing, silently: USB_DEVICE was hardcoded past its own
+variable, and DEBUG_REGISTERS was simply absent. Both looked configured and
+were not.
+
+Compose is the one place that can still happen. Until 2026-09-24 this also
+checked the Pi deploy action and workflows; those are gone, and on the cluster
+an env entry on the Deployment reaches the process with nothing in between.
 
 Run from the repo root:  python3 monitor/check_env_plumbing.py
 """
@@ -36,18 +39,13 @@ def env_names_read():
 
 def main():
     compose = (ROOT / "docker-compose.yml").read_text()
-    action = (ROOT / ".github/actions/deploy-to-pi/action.yml").read_text()
-    workflows = "".join((ROOT / ".github/workflows" / w).read_text()
-                        for w in ("update_monitor.yml", "build_container.yml"))
 
     problems = []
     for name in sorted(env_names_read()):
         if name in LOCAL_ONLY:
             continue
         missing = [layer for layer, text in
-                   (("docker-compose.yml", compose),
-                    ("deploy action", action),
-                    ("workflows", workflows))
+                   (("docker-compose.yml", compose),)
                    if name not in text and name.lower() not in text]
         status = "ok" if not missing else "MISSING in " + ", ".join(missing)
         print("  {0:<20} {1}".format(name, status))
@@ -57,7 +55,7 @@ def main():
     if problems:
         print("\n{0} setting(s) read by the code but not deliverable.".format(len(problems)))
         return 1
-    print("\nEvery deployable setting is plumbed end to end.")
+    print("\nEvery deployable setting is declared in docker-compose.yml.")
     return 0
 
 
