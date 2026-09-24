@@ -25,24 +25,21 @@ jobs:
     # remains a valid fallback.
     runs-on: mbarukville
     strategy:
-      # The inverter and the BMS are independent sources on separate machines.
-      # One host being unreachable must not cancel the other's deploy.
+      # Kept as a matrix so another Pi-hosted target can be added back, and so
+      # one host being unreachable never cancels another's deploy.
       fail-fast: false
       matrix:
         include:
-          # The inverter host. battery_device_var points at BATTERY_DEVICE,
-          # which is deliberately left unset: the inverter's built-in USB
-          # serial interface and the battery's RS485 adapter cannot share a
-          # host. That was reproduced on both Pis, and the inverter is always
-          # the one that stops answering, so each machine reads one device.
-          - target: inverter
-            host_secret: RASPBERRY_PI_IP
-            path_secret: SOLAR_APP_PATH
-            usb_device_var: USB_DEVICE
-            battery_device_var: BATTERY_DEVICE
-            db_host_var: DB_HOST
-            host_tag_var: HOST_TAG
-            bms_only: ""
+          # There is no inverter target any more. Since 2026-09-24 the inverter
+          # is read by a pod on the cluster (MbarukInc/homelab-infra,
+          # solarmonitoring/solar-inverter.yaml), from an image Publish_Image
+          # builds; the Pi at .13 that this used to deploy to is retired.
+          #
+          # The battery could not follow it: the inverter's USB serial
+          # interface and the battery's RS485 adapter cannot share a host --
+          # the inverter goes mute. Measured on both Pis and again on the
+          # cluster node, which ruled out power. So the battery stays here, on
+          # its own Pi, until a USB isolator is on its link.
 
           # The BMS host. BMS_USB_DEVICE names a by-path that deliberately does
           # not exist, so opening the inverter fails and monitor.py falls back
