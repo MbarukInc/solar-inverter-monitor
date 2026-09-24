@@ -1,0 +1,83 @@
+name: Publish_Image
+
+# Builds the monitor image and pushes it to GHCR, for the cluster to pull.
+#
+# The Pis built their own image in place (`docker compose up -d --build`), which
+# only works because each Pi is a machine with a Docker daemon and a checkout.
+# A pod has neither: Kubernetes pulls an image someone else built. So this is
+# the replacement for the build half of the Pi deploys -- the deploy half
+# becomes a digest bump in MbarukInc/homelab-infra.
+#
+# Not `runs-on: mbarukville`: those runners are ARC pods with no Docker daemon
+# and no privileged socket, so they cannot build images. This runs on a
+# GitHub-hosted runner, which also means it needs no access to the home LAN --
+# it pushes to GHCR and never touches the cluster.
+on:
+  push:
+    branches:
+      - main
+    # Only when something that lands in the image changes. The deploy workflows
+    # and the Grafana dashboards do not.
+    paths:
+      - monitor/**
+      - .github/workflows/publish_image.yml
+  workflow_dispatch:
+
+concurrency:
+  group: publish-image
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # To push to ghcr.io/mbarukinc/solar-inverter-monitor with GITHUB_TOKEN.
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: monitor
+          push: true
+          # amd64 only: the cluster is amd64, and the Pis this replaces built
+          # their own. Adding arm64 here would double the build for nothing.
+          platforms: linux/amd64
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}:latest
+          # Layer cache in the registry, so a requirements.txt that has not
+          # changed is not reinstalled on every push.
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache,mode=max
+
+      - name: Print the line for homelab-infra
+        run: |
+          {
+            echo '## Image published'
+            echo
+            echo 'Paste into `solarmonitoring/solar-monitor.yaml` in MbarukInc/homelab-infra,'
+            echo 'in both Deployments, then apply:'
+            echo
+            echo '```yaml'
+            echo "          image: ghcr.io/${{ github.repository }}:${{ github.sha }}@${{ steps.build.outputs.digest }}"
+            echo '```'
+            echo
+            echo 'Then:'
+            echo
+            echo '```bash'
+            echo './scripts/kubectl-remote.sh apply -f - < solarmonitoring/solar-monitor.yaml'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
