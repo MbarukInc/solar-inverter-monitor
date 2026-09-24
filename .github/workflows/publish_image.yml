@@ -84,8 +84,8 @@ jobs:
           {
             echo '## Image published'
             echo
-            echo 'Paste into `solarmonitoring/solar-monitor.yaml` in MbarukInc/homelab-infra,'
-            echo 'in both Deployments, then apply:'
+            echo 'Paste into `solarmonitoring/solar-inverter.yaml` in MbarukInc/homelab-infra'
+            echo '(and `solar-bms.yaml` once that runs on the cluster), then apply:'
             echo
             echo '```yaml'
             echo "          image: $IMAGE:$GITHUB_SHA@${{ steps.build.outputs.digest }}"
@@ -94,6 +94,6 @@ jobs:
             echo 'Then:'
             echo
             echo '```bash'
-            echo './scripts/kubectl-remote.sh apply -f - < solarmonitoring/solar-monitor.yaml'
+            echo './scripts/kubectl-remote.sh apply -f - < solarmonitoring/solar-inverter.yaml'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

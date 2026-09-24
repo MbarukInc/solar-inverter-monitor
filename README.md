@@ -174,7 +174,7 @@ map and for why exports are normalised before committing.
 
 The plan is for both readers to become pods on `mbarukville-02`, so the two Pis
 can be retired. The manifests live in `MbarukInc/homelab-infra`
-(`solarmonitoring/solar-monitor.yaml`), and this repo's job shrinks to building
+(`solarmonitoring/solar-inverter.yaml`, `solar-bms.yaml`), and this repo's job shrinks to building
 the image.
 
 A pod cannot build its own image the way each Pi did with
@@ -191,8 +191,8 @@ Deploying is then two steps, both by hand and on purpose -- the same digest pin
 every other image in that repo gets:
 
 1. The workflow's summary prints the exact `image:` line, tag and digest.
-2. Paste it into `solarmonitoring/solar-monitor.yaml`, both Deployments, and
-   apply.
+2. Paste it into `solarmonitoring/solar-inverter.yaml` (and `solar-bms.yaml`,
+   once that runs on the cluster), and apply.
 
 The package inherits this repo's visibility, so it is private and the cluster
 pulls it with a `ghcr-pull` secret holding a `read:packages` token.
