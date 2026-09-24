@@ -27,6 +27,12 @@ concurrency:
   group: publish-image
   cancel-in-progress: false
 
+env:
+  # Spelled out rather than built from github.repository, which is
+  # "MbarukInc/solar-inverter-monitor". Image names must be lowercase, and the
+  # first run failed on exactly that.
+  IMAGE: ghcr.io/mbarukinc/solar-inverter-monitor
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -46,6 +52,18 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      # Every build gets its commit's tag; only main moves `latest`, so a
+      # dispatch from a branch (to test a change to this file) cannot repoint it.
+      - name: Choose tags
+        id: tags
+        run: |
+          {
+            echo 'list<<EOF'
+            echo "$IMAGE:$GITHUB_SHA"
+            if [ "$GITHUB_REF" = refs/heads/main ]; then echo "$IMAGE:latest"; fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         id: build
         uses: docker/build-push-action@v6
@@ -55,29 +73,27 @@ jobs:
           # amd64 only: the cluster is amd64, and the Pis this replaces built
           # their own. Adding arm64 here would double the build for nothing.
           platforms: linux/amd64
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ github.sha }}
-            ghcr.io/${{ github.repository }}:latest
+          tags: ${{ steps.tags.outputs.list }}
           # Layer cache in the registry, so a requirements.txt that has not
           # changed is not reinstalled on every push.
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache,mode=max
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
 
       - name: Print the line for homelab-infra
         run: |
           {
             echo '## Image published'
             echo
-            echo 'Paste into `solarmonitoring/solar-monitor.yaml` in MbarukInc/homelab-infra,'
-            echo 'in both Deployments, then apply:'
+            echo 'Paste into `solarmonitoring/solar-inverter.yaml` in MbarukInc/homelab-infra'
+            echo '(and `solar-bms.yaml` once that runs on the cluster), then apply:'
             echo
             echo '```yaml'
-            echo "          image: ghcr.io/${{ github.repository }}:${{ github.sha }}@${{ steps.build.outputs.digest }}"
+            echo "          image: $IMAGE:$GITHUB_SHA@${{ steps.build.outputs.digest }}"
             echo '```'
             echo
             echo 'Then:'
             echo
             echo '```bash'
-            echo './scripts/kubectl-remote.sh apply -f - < solarmonitoring/solar-monitor.yaml'
+            echo './scripts/kubectl-remote.sh apply -f - < solarmonitoring/solar-inverter.yaml'
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

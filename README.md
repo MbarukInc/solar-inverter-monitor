@@ -17,9 +17,9 @@ Repository secrets (Settings → Secrets and variables → Actions → Secrets):
 | --- | --- |
 | `DB_USERNAME` | InfluxDB username |
 | `DB_PASSWORD` | InfluxDB password |
-| `RASPBERRY_PI_IP` | already configured |
-| `SOLAR_APP_PATH` | already configured |
-| `PI_SSH_KEY` | Private deploy key for `pi@<RASPBERRY_PI_IP>` |
+| `RASPBERRY_PI_IP` | unused since 2026-09-24: the inverter's Pi (`.13`) is retired |
+| `SOLAR_APP_PATH` | unused since 2026-09-24, as above |
+| `PI_SSH_KEY` | Private deploy key for `pi@<BMS_PI_IP>` |
 | `PI_KNOWN_HOSTS` | `ssh-keyscan -H <PI_IP>` output for **every** deploy host |
 | `BMS_PI_IP` | Host running the battery reader. Unset skips that target entirely |
 | `BMS_APP_PATH` | Absolute path to the checkout on the BMS host |
@@ -174,7 +174,7 @@ map and for why exports are normalised before committing.
 
 The plan is for both readers to become pods on `mbarukville-02`, so the two Pis
 can be retired. The manifests live in `MbarukInc/homelab-infra`
-(`solarmonitoring/solar-monitor.yaml`), and this repo's job shrinks to building
+(`solarmonitoring/solar-inverter.yaml`, `solar-bms.yaml`), and this repo's job shrinks to building
 the image.
 
 A pod cannot build its own image the way each Pi did with
@@ -191,8 +191,8 @@ Deploying is then two steps, both by hand and on purpose -- the same digest pin
 every other image in that repo gets:
 
 1. The workflow's summary prints the exact `image:` line, tag and digest.
-2. Paste it into `solarmonitoring/solar-monitor.yaml`, both Deployments, and
-   apply.
+2. Paste it into `solarmonitoring/solar-inverter.yaml` (and `solar-bms.yaml`,
+   once that runs on the cluster), and apply.
 
 The package inherits this repo's visibility, so it is private and the cluster
 pulls it with a `ghcr-pull` secret holding a `read:packages` token.
@@ -216,8 +216,11 @@ layers). This script cross-references them and exits non-zero on a gap.
 
 ## Two hosts, one device each
 
-The inverter and the battery are read by **separate Pis**, and that is not a
-convenience — the two adapters cannot share a host.
+The inverter and the battery are read by **separate hosts**, and that is not a
+convenience — the two adapters cannot share a host. Since 2026-09-24 the
+inverter is read by a pod on the cluster node `mbarukville-02` (see
+[Running on the cluster instead of the Pis](#running-on-the-cluster-instead-of-the-pis))
+and the battery by the Pi 4; the Pi Model B+ at `.13` is retired.
 
 Plugging both into one machine leaves the battery working and the inverter
 mute: its port returns a continuously low line (~110 bytes/s of `0x00`,
@@ -226,18 +229,32 @@ Removing either adapter restores the other. Reproduced on both a Pi Model B+
 and a Pi 4, on every USB port and both socket types, with autosuspend off and
 a fresh `ch341` bind. The inverter is always the one that fails.
 
-The likeliest cause is a ground loop rather than current draw: the inverter's
+**Measured again on 2026-09-24 on `mbarukville-02`**, a mini PC, with the same
+result and the same ~118 bytes/s of `0x00`. That settled what the Pis alone
+could not:
+
+- **Not current draw.** That host has ample USB power. (The B+ really was
+  under-voltage, `throttled=0x50005`, but that was not the cause.)
+- **Not a USB or driver clash.** With the battery adapter deauthorized in sysfs
+  -- no driver, no device node, still cabled -- the inverter stayed mute.
+
+What is left is the physical connection: a ground loop. The inverter's
 USB-serial chip is *inside* the mains-referenced inverter, while the battery
 adapter is referenced to the pack's negative terminal, so one host bridges the
 two grounds. A powered hub does not address that; a USB isolator on the battery
 link would. Until then, one device per host.
 
-Deploys are a matrix over two targets:
+The Pi deploys are now a matrix of one target, kept as a matrix so another Pi
+could be added back:
 
 | Target | Reads | Configured by |
 | --- | --- | --- |
-| `inverter` | inverter over Modbus | `RASPBERRY_PI_IP`, `SOLAR_APP_PATH`, `USB_DEVICE` |
 | `bms` | battery BMS only | `BMS_PI_IP`, `BMS_APP_PATH`, `BMS_BATTERY_DEVICE` |
+
+The `inverter` target was removed when the inverter moved to the cluster. Its
+secrets and variables (`RASPBERRY_PI_IP`, `SOLAR_APP_PATH`, `USB_DEVICE`,
+`HOST_TAG`) no longer drive anything; they were left in place rather than
+deleted.
 
 The BMS host sets **`BMS_ONLY=true`**, which makes `monitor.py` skip the
 inverter entirely rather than trying and failing. Without it the inverter
@@ -257,8 +274,8 @@ The `state` tag on a battery-only point is **`BmsOnly`**, not `NoComms`. Those
 are different events — one host has no inverter by design, the other has one
 that stopped answering — and a query has to be able to tell them apart.
 
-`Build_Container` takes a **target** input (`all`, `inverter`, `bms`) so one
-host can be rebuilt without touching the other. A target whose host secret is
+`Build_Container` takes a **target** input (`all`, `bms`) so one host can be
+rebuilt without touching another. A target whose host secret is
 unset is skipped with a notice rather than failing the run.
 
 ## Battery BMS (state of charge)
