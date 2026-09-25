@@ -56,6 +56,30 @@ rather than creating a duplicate.
 Dashboards → New → Import → upload `dashboard.json`. It matches on `uid` and
 updates in place.
 
+## Alerts
+
+[`alerts/`](alerts/) holds Grafana Cloud alert rules in Grafana's provisioning
+format, tracked for the same reason the dashboard is.
+
+| Rule | Fires when |
+| --- | --- |
+| [`battery-cell-overvoltage.yaml`](alerts/battery-cell-overvoltage.yaml) | any cell reaches 3.60 V, below the BMS cut-off at 3.65 V |
+
+**In Grafana Cloud, not in the cluster's Alertmanager.** That Alertmanager
+routes everything to the chart's `null` receiver, so a rule there would fire and
+reach nobody, and Prometheus cannot query InfluxDB anyway. Grafana Cloud already
+reaches these InfluxDBs through the PDC agent, its contact points need no
+credential on the cluster, and it evaluates from outside the house. See
+homelab-infra `observability/README.md`, "Alerting".
+
+To apply: *Alerting → Alert rules → New alert rule → Import from file*, or
+`POST /api/v1/provisioning/alert-rules` with a service-account token. The rule
+carries `uid: bms-cell-overvoltage`, so re-importing updates it in place rather
+than creating a duplicate.
+
+The data source uid `fdwa5hfyf5o1sa` is the same InfluxDB the dashboard's panels
+use. It needs a contact point on the `Solar` folder to actually notify.
+
 ## Notes
 
 **Grid Power vs KPLC.** `gridPower` is real power (W) and signed — negative is

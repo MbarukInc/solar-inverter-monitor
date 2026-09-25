@@ -1,0 +1,111 @@
+# Battery cell approaching over-voltage.
+#
+# Grafana Cloud alert rule, in Grafana's provisioning format. Tracked here for
+# the same reason dashboard.json is: the thing it queries is written by
+# monitor/, so a decode change and the alert that depends on it land together.
+#
+# Why Grafana Cloud and not a PrometheusRule: the cluster's Alertmanager routes
+# everything to the chart's `null` receiver, so an alert there would fire and
+# reach nobody -- and Prometheus cannot query InfluxDB in any case. See
+# homelab-infra observability/README.md, "Alerting".
+#
+# What it watches. The pack's BMS trips cell over-voltage protection at 3.65 V.
+# On 2026-09-24, the first day the pack ever reached full, cell 8 hit 3.665 V
+# and the BMS had recorded 896 OVP events against 11 under-voltage and 1
+# over-current. Cells 7 and 8 run ~0.2 V above cells 3/4/5, so charging
+# terminates on one cell while the pack is still ~0.34 V short of program 17's
+# 28.2 V target. 3.60 V fires before the protection point rather than after it.
+#
+# Expect it to fire daily while the imbalance persists. That is the alert doing
+# its job, not noise -- it should fall silent as the balancer closes the spread,
+# and that silence is the signal worth waiting for.
+#
+# noDataState is NoData deliberately: if the battery reader stops writing, that
+# is also worth knowing. Set it to OK if you would rather not conflate the two.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: solar-battery
+    folder: Solar
+    interval: 5m
+    rules:
+      - uid: bms-cell-overvoltage
+        title: Battery cell approaching over-voltage
+        condition: C
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: >-
+            A battery cell has reached {{ humanize $values.B.Value }} V, close to
+            the BMS over-voltage cut-off at 3.65 V.
+          description: >-
+            Charging terminates on the highest cell, so the pack stops short of a
+            full charge and the BMS logs an OVP event each time. Check the cell
+            spread on the Cell Voltages panel: if the daily peak is not shrinking,
+            the balancer is not keeping up.
+        labels:
+          severity: warning
+          system: solar
+        data:
+          # The highest cell voltage seen in the last 30 minutes. A window rather
+          # than the latest sample because OVP trips are brief -- charge stops,
+          # the cell relaxes, charge resumes -- and a `last` would miss them
+          # between evaluations.
+          - refId: A
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            datasourceUid: fdwa5hfyf5o1sa
+            model:
+              refId: A
+              datasource:
+                type: influxdb
+                uid: fdwa5hfyf5o1sa
+              query: >-
+                SELECT max("bms_cell_max") FROM "logs"
+                WHERE $timeFilter GROUP BY time(5m) fill(none)
+              rawQuery: true
+              resultFormat: time_series
+          - refId: B
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              reducer: max
+              expression: A
+              datasource:
+                type: __expr__
+                uid: __expr__
+              settings:
+                mode: dropNN
+          - refId: C
+            relativeTimeRange:
+              from: 1800
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              datasource:
+                type: __expr__
+                uid: __expr__
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 3.6
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - B
+                  reducer:
+                    type: last
+                    params: []
+                  type: query
