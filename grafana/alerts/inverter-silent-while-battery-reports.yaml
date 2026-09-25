@@ -1,0 +1,158 @@
+# The inverter stopped answering while the battery reader kept working.
+#
+# Grafana Cloud alert rule, in Grafana's provisioning format. See
+# battery-cell-overvoltage.yaml for why these live in Grafana Cloud and not in
+# the cluster's Alertmanager.
+#
+# Why this shape. The two readers are separate processes on one host, reading
+# separate devices. When the battery keeps reporting and the inverter does not,
+# almost everything shared is exonerated at once -- the node, its USB
+# controller, the ch341 driver, the network, InfluxDB -- and what is left is the
+# inverter link itself. The battery reader is the control in the experiment.
+#
+# That pattern is not hypothetical. It has happened twice:
+#   2026-09-23  port opened, line quiet, no Modbus reply at any baud or slave
+#   2026-09-25  nine power cuts; the battery reader recovered from all nine,
+#               the inverter never got its Modbus back and needed a restart
+# The second cost 3h41m of inverter data, discovered only because someone
+# happened to ask. Both times the unit was running normally the whole time --
+# serving the house, cycling the battery. Only the comms were gone.
+#
+# Both queries fill(0) so an absent inverter counts as zero rather than
+# returning no series, which would land in NoData instead of firing.
+#
+# A ten-minute window, not the latest sample: pod restarts leave one or two
+# minute gaps, and those should not page anyone. A sustained outage zeroes the
+# whole window; a restart does not.
+#
+# If both readers go quiet, this stays silent by design -- $D > 0 requires the
+# battery reader to still be working. That case is the host or the database,
+# not the inverter, and NoData covers it.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: solar-inverter
+    folder: Solar
+    interval: 1m
+    rules:
+      - uid: inverter-silent-while-bms-reports
+        title: Inverter stopped reporting while the battery still does
+        condition: F
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: >-
+            No inverter samples for ten minutes, while the battery reader is
+            still writing normally.
+          description: >-
+            The node, its USB bus, the driver, the network and InfluxDB are all
+            working, because the battery reader shares every one of them. Look at
+            the inverter link: check the solar-inverter pod's log for
+            NoResponseError, and the idle byte count on its port -- zero means
+            the line is connected and the inverter is not answering, ~110 B/s
+            means it is floating. Twice before, only an inverter restart cleared
+            it.
+        labels:
+          severity: warning
+          system: solar
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: fdwa5hfyf5o1sa
+            model:
+              refId: A
+              datasource:
+                type: influxdb
+                uid: fdwa5hfyf5o1sa
+              query: >-
+                SELECT count("output_w") FROM "logs"
+                WHERE $timeFilter GROUP BY time(1m) fill(0)
+              rawQuery: true
+              resultFormat: time_series
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: fdwa5hfyf5o1sa
+            model:
+              refId: B
+              datasource:
+                type: influxdb
+                uid: fdwa5hfyf5o1sa
+              query: >-
+                SELECT count("bms_soc") FROM "logs"
+                WHERE $timeFilter GROUP BY time(1m) fill(0)
+              rawQuery: true
+              resultFormat: time_series
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: reduce
+              reducer: sum
+              expression: A
+              datasource:
+                type: __expr__
+                uid: __expr__
+              settings:
+                mode: dropNN
+          - refId: D
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: D
+              type: reduce
+              reducer: sum
+              expression: B
+              datasource:
+                type: __expr__
+                uid: __expr__
+              settings:
+                mode: dropNN
+          - refId: E
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: E
+              type: math
+              expression: ($D > 0) && ($C == 0)
+              datasource:
+                type: __expr__
+                uid: __expr__
+          - refId: F
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              refId: F
+              type: threshold
+              expression: E
+              datasource:
+                type: __expr__
+                uid: __expr__
+              conditions:
+                - evaluator:
+                    type: gt
+                    params:
+                      - 0
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - E
+                  reducer:
+                    type: last
+                    params: []
+                  type: query
