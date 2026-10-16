@@ -65,6 +65,7 @@ format, tracked for the same reason the dashboard is.
 | --- | --- |
 | [`battery-cell-overvoltage.yaml`](alerts/battery-cell-overvoltage.yaml) | any cell reaches 3.60 V, below the BMS cut-off at 3.65 V |
 | [`inverter-silent-while-battery-reports.yaml`](alerts/inverter-silent-while-battery-reports.yaml) | no inverter samples for ten minutes while the battery reader keeps writing |
+| [`bms-silent-while-inverter-reports.yaml`](alerts/bms-silent-while-inverter-reports.yaml) | no battery samples for ten minutes while the inverter reader keeps writing |
 
 **In Grafana Cloud, not in the cluster's Alertmanager.** That Alertmanager
 routes everything to the chart's `null` receiver, so a rule there would fire and

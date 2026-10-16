@@ -1,0 +1,120 @@
+# The battery reader stopped while the inverter reader kept working.
+#
+# The mirror of inverter-silent-while-battery-reports.yaml, and the one that
+# matters most in practice: every multi-hour gap so far has been this way
+# round, not the other.
+#
+#   2026-10-11 14:27 -> 10-12 04:55   14h 33m  adapter degrading (EPROTO -71)
+#   2026-10-12 12:35 -> 10-12 14:05    1h 30m  same, self-cleared
+#   2026-10-15 07:27 -> 10-16 06:08   22h 41m  adapter died and was replaced
+#
+# About 39 hours of battery data in five days, every hour of it discovered by
+# someone happening to look. The inverter reader ran at 100% throughout, which
+# is exactly what makes it a good control: when it keeps writing and the
+# battery reader does not, the node, its USB bus, the driver, the network and
+# InfluxDB are all exonerated at once.
+#
+# Both queries fill(0) so an absent battery reader counts as zero rather than
+# returning no series, which would land in NoData instead of firing.
+#
+# Ten-minute window, not the latest sample: a pod restart leaves a one- or
+# two-minute gap and should not page anyone, while a real outage zeroes the
+# whole window.
+#
+# If both readers go quiet this stays silent by design -- $D > 0 requires the
+# inverter reader to still be working. That case is the host or the database,
+# and NoData covers it.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: solar-bms-liveness
+    folder: Solar
+    interval: 1m
+    rules:
+      - uid: bms-silent-while-inverter-reports
+        title: Battery reader stopped while the inverter still reports
+        condition: F
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        isPaused: false
+        annotations:
+          summary: >-
+            No battery samples for ten minutes, while the inverter reader is
+            still writing normally.
+          description: >-
+            The node, its USB bus, the driver, the network and InfluxDB are all
+            working, because the inverter reader shares every one of them. Check
+            the battery adapter's USB link: `dmesg | grep -- -71` on the node
+            shows EPROTO errors when the adapter is failing, and the port will
+            refuse to open with Errno 5. A USB reset has cleared it before; a
+            dead adapter needs replacing, and after replacing one the reader
+            reopens the device on its next cycle.
+        labels:
+          severity: warning
+          system: solar
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: fdwa5hfyf5o1sa
+            model:
+              refId: A
+              datasource: {type: influxdb, uid: fdwa5hfyf5o1sa}
+              query: >-
+                SELECT count("bms_soc") FROM "logs"
+                WHERE $timeFilter GROUP BY time(1m) fill(0)
+              rawQuery: true
+              resultFormat: time_series
+          - refId: B
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: fdwa5hfyf5o1sa
+            model:
+              refId: B
+              datasource: {type: influxdb, uid: fdwa5hfyf5o1sa}
+              query: >-
+                SELECT count("output_w") FROM "logs"
+                WHERE $timeFilter GROUP BY time(1m) fill(0)
+              rawQuery: true
+              resultFormat: time_series
+          - refId: C
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: reduce
+              reducer: sum
+              expression: A
+              datasource: {type: __expr__, uid: __expr__}
+              settings: {mode: dropNN}
+          - refId: D
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: D
+              type: reduce
+              reducer: sum
+              expression: B
+              datasource: {type: __expr__, uid: __expr__}
+              settings: {mode: dropNN}
+          - refId: E
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: E
+              type: math
+              expression: ($D > 0) && ($C == 0)
+              datasource: {type: __expr__, uid: __expr__}
+          - refId: F
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: __expr__
+            model:
+              refId: F
+              type: threshold
+              expression: E
+              datasource: {type: __expr__, uid: __expr__}
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+                  operator: {type: and}
+                  query: {params: [E]}
+                  reducer: {type: last, params: []}
+                  type: query
