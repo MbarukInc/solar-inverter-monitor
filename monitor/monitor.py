@@ -239,6 +239,24 @@ def main() -> int:
     while not shutdown.is_set():
         started = datetime.now(timezone.utc)
 
+        # The BMS is opened once before the loop; if that attempt failed the
+        # reader stays None for the life of the process unless it is retried
+        # here, exactly as the inverter is below. Without this, replacing a
+        # dead adapter does not bring the readings back: on 2026-10-15 the
+        # adapter was swapped at 14:56 and this container, started at 05:38
+        # while the old one was still dead, sat idle for thirteen hours
+        # afterwards -- running, logging nothing, writing nothing.
+        if battery_reader is None and BATTERY_DEVICE:
+            try:
+                battery_reader = must_bms.MustBMS(BATTERY_DEVICE)
+                log.info("BMS link opened on %s", BATTERY_DEVICE)
+                battery_failure = None
+            except Exception as exc:
+                signature = "{0}: {1}".format(type(exc).__name__, exc)
+                if signature != battery_failure:
+                    log.warning("BMS still unavailable: %s", signature)
+                    battery_failure = signature
+
         # Read the BMS first and independently. The two devices fail
         # separately: the inverter link was down for a day while the battery
         # answered normally, and losing SOC because the inverter is mute would
