@@ -74,10 +74,27 @@ reaches these InfluxDBs through the PDC agent, its contact points need no
 credential on the cluster, and it evaluates from outside the house. See
 homelab-infra `observability/README.md`, "Alerting".
 
-To apply: *Alerting → Alert rules → New alert rule → Import from file*, or
-`POST /api/v1/provisioning/alert-rules` with a service-account token. The rule
-carries `uid: bms-cell-overvoltage`, so re-importing updates it in place rather
-than creating a duplicate.
+To apply, run [`alerts/import.py`](alerts/import.py):
+
+```bash
+export GRAFANA_URL=https://<stack>.grafana.net
+export GRAFANA_TOKEN=<service account token, Editor or Admin>
+python3 grafana/alerts/import.py --folder Power --dry-run   # then without it
+```
+
+**Not** *Alerting → Alert rules → Import*. That dialog reads **Prometheus**
+rule files (`groups[].rules[].expr`) and creates data-source-managed rules;
+these are Grafana-managed rules in Grafana's own provisioning format, and it
+rejects them with *"missing or invalid groups array at index 0"*. The
+provisioning API takes the rule object itself, not the `apiVersion`/`groups`
+wrapper, which is what the script unwraps.
+
+Every rule carries a fixed `uid`, so re-running updates in place rather than
+duplicating. The script sends `X-Disable-Provenance` so the rules stay editable
+in the UI -- without it Grafana marks them provisioned and read-only, which is
+wrong for a threshold still being tuned.
+
+The folder must already exist; `--folder` overrides the `folder:` in each file.
 
 The data source uid `fdwa5hfyf5o1sa` is the same InfluxDB the dashboard's panels
 use. It needs a contact point on the `Solar` folder to actually notify.
