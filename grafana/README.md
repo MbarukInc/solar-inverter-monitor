@@ -97,7 +97,14 @@ wrong for a threshold still being tuned.
 The folder must already exist; `--folder` overrides the `folder:` in each file.
 
 The data source uid `fdwa5hfyf5o1sa` is the same InfluxDB the dashboard's panels
-use. It needs a contact point on the `Solar` folder to actually notify.
+use.
+
+Each rule carries `notification_settings.receiver: JM Email`. Grafana routes by
+notification policy, not by folder: the policy tree on this stack has no routes,
+so a rule without an explicit receiver falls through to the default one -- still
+Grafana's stock `<example@email.com>` -- and reaches nobody. All three did
+exactly that until 2026-10-26. The key is snake_case while every key around it
+is camelCase; that is Grafana's provisioning API, not a typo here.
 
 The second rule uses the battery reader as a control: both readers are separate
 processes on one host, so if the battery keeps reporting and the inverter does
