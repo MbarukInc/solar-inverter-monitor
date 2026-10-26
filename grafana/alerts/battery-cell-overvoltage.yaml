@@ -48,6 +48,12 @@ groups:
         labels:
           severity: warning
           system: solar
+        # Without this the rule falls through the notification policy tree,
+        # which has no routes, to the default receiver -- still Grafana's stock
+        # <example@email.com> -- and notifies nobody. The snake_case key is
+        # Grafana's own inconsistency: every other key in this file is camelCase.
+        notification_settings:
+          receiver: JM Email
         data:
           # The highest cell voltage seen in the last 30 minutes. A window rather
           # than the latest sample because OVP trips are brief -- charge stops,
