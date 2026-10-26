@@ -61,11 +61,23 @@ updates in place.
 [`alerts/`](alerts/) holds Grafana Cloud alert rules in Grafana's provisioning
 format, tracked for the same reason the dashboard is.
 
-| Rule | Fires when |
-| --- | --- |
-| [`battery-cell-overvoltage.yaml`](alerts/battery-cell-overvoltage.yaml) | any cell reaches 3.60 V, below the BMS cut-off at 3.65 V |
-| [`inverter-silent-while-battery-reports.yaml`](alerts/inverter-silent-while-battery-reports.yaml) | no inverter samples for ten minutes while the battery reader keeps writing |
-| [`bms-silent-while-inverter-reports.yaml`](alerts/bms-silent-while-inverter-reports.yaml) | no battery samples for ten minutes while the inverter reader keeps writing |
+| Rule | Fires when | Notifies |
+| --- | --- | --- |
+| [`battery-cell-overvoltage.yaml`](alerts/battery-cell-overvoltage.yaml) | any cell reaches 3.60 V, below the BMS cut-off at 3.65 V | JM Email |
+| [`inverter-silent-while-bms-reports.yaml`](alerts/inverter-silent-while-bms-reports.yaml) | no inverter samples for ten minutes while the battery reader keeps writing | JM Email |
+| [`bms-silent-while-inverter-reports.yaml`](alerts/bms-silent-while-inverter-reports.yaml) | no battery samples for ten minutes while the inverter reader keeps writing | JM Email |
+| [`kplc-voltage.yaml`](alerts/kplc-voltage.yaml) | the last `gridVoltage` reading in twelve hours is below 220 V | JM Email |
+| [`inverter-data-polling-issues.yaml`](alerts/inverter-data-polling-issues.yaml) | the last `bat_volts` reading in six hours is below 20 V | `tr-node8-solar-remediation` webhook |
+
+The last two were built from the dashboard long before the others and were live
+but untracked until 2026-10-26, so both this table and this directory claimed
+less than was actually running. They are exported as found.
+
+`inverter-data-polling-issues.yaml` overlaps
+`inverter-silent-while-bms-reports.yaml` and tests the same failure less
+precisely: a battery-voltage floor cannot separate a dead inverter link from a
+genuinely flat battery, nor the inverter stopping from the host stopping.
+Whether it should now be retired is open.
 
 **In Grafana Cloud, not in the cluster's Alertmanager.** That Alertmanager
 routes everything to the chart's `null` receiver, so a rule there would fire and
@@ -79,7 +91,7 @@ To apply, run [`alerts/import.py`](alerts/import.py):
 ```bash
 export GRAFANA_URL=https://<stack>.grafana.net
 export GRAFANA_TOKEN=<service account token, Editor or Admin>
-python3 grafana/alerts/import.py --folder Power --dry-run   # then without it
+python3 grafana/alerts/import.py --dry-run   # then without it
 ```
 
 **Not** *Alerting → Alert rules → Import*. That dialog reads **Prometheus**
@@ -94,19 +106,30 @@ duplicating. The script sends `X-Disable-Provenance` so the rules stay editable
 in the UI -- without it Grafana marks them provisioned and read-only, which is
 wrong for a threshold still being tuned.
 
-The folder must already exist; `--folder` overrides the `folder:` in each file.
+A group's `interval:` is applied after that group's rules, in a second call:
+the one-rule-at-a-time endpoint cannot carry it, so the API creates any new
+group at its own default of 1m. Until 2026-10-26 the script did not make that
+call at all and the field was silently ignored -- `solar-battery` asked for 5m
+and evaluated every 1m from its first import onwards.
+
+Each file names its own folder, so no argument is needed. `--folder` overrides
+it when the rules should go somewhere else -- a scratch folder for testing, say
+-- and the folder must already exist either way. The live folder is `Power`;
+these files said `Solar`, which exists nowhere on this stack, so until
+2026-10-26 every run needed `--folder Power` or it exited
+*"FOLDER 'Solar' not found"*.
 
 The data source uid `fdwa5hfyf5o1sa` is the same InfluxDB the dashboard's panels
 use.
 
-Each rule carries `notification_settings.receiver: JM Email`. Grafana routes by
-notification policy, not by folder: the policy tree on this stack has no routes,
-so a rule without an explicit receiver falls through to the default one -- still
-Grafana's stock `<example@email.com>` -- and reaches nobody. All three did
-exactly that until 2026-10-26. The key is snake_case while every key around it
+Each rule names its own receiver under `notification_settings`. Grafana routes
+by notification policy, not by folder: the policy tree on this stack has no
+routes, so a rule without an explicit receiver falls through to the default one
+-- still Grafana's stock `<example@email.com>` -- and reaches nobody. The three
+solar rules did exactly that from the day they were written until 2026-10-26. The key is snake_case while every key around it
 is camelCase; that is Grafana's provisioning API, not a typo here.
 
-The second rule uses the battery reader as a control: both readers are separate
+`inverter-silent-while-bms-reports.yaml` uses the battery reader as a control: both readers are separate
 processes on one host, so if the battery keeps reporting and the inverter does
 not, the node, its USB bus, the driver, the network and InfluxDB are all
 exonerated at once. If both go quiet it stays silent on purpose -- that is the

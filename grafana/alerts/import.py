@@ -10,7 +10,7 @@ rule object itself rather than the apiVersion/groups wrapper around it.
 
     export GRAFANA_URL=https://<stack>.grafana.net
     export GRAFANA_TOKEN=<service account token, Editor or Admin>
-    python3 grafana/alerts/import.py --folder Power
+    python3 grafana/alerts/import.py
 
 The folder is looked up by title and must already exist. Re-running updates
 each rule in place: every rule carries a fixed uid, so this is idempotent.
@@ -18,8 +18,11 @@ each rule in place: every rule carries a fixed uid, so this is idempotent.
 X-Disable-Provenance keeps the rules editable in the UI. Without it Grafana
 marks them provisioned and refuses edits there, which is wrong for rules a
 person is still tuning -- the cell-voltage threshold especially.
+
+Each group's `interval:` is applied separately, after its rules: the
+one-rule-at-a-time endpoint has nowhere to carry it.
 """
-import argparse, json, os, sys, urllib.error, urllib.request
+import argparse, json, os, re, sys, urllib.error, urllib.request
 
 try:
     import yaml
@@ -27,6 +30,18 @@ except ImportError:
     sys.exit("needs pyyaml: pip3 install pyyaml")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+UNITS = {"s": 1, "m": 60, "h": 3600}
+
+
+def seconds(interval):
+    """Group intervals are written 5m/30s/1h here; the API wants an integer."""
+    if isinstance(interval, int):
+        return interval
+    m = re.fullmatch(r"(\d+)([smh])", str(interval).strip())
+    if not m:
+        raise ValueError("cannot read interval %r" % (interval,))
+    return int(m.group(1)) * UNITS[m.group(2)]
 
 
 def call(url, token, path, method="GET", body=None):
@@ -97,6 +112,40 @@ def main():
                 if not ok:
                     print("      %s" % body)
                     rc = 1
+
+            # The rules above go in one at a time, and that endpoint carries no
+            # interval -- so when the provisioning API has to create the group
+            # it uses its own default of 1m. Every `interval:` in these files
+            # was therefore ignored: solar-battery asked for 5m and ran at 1m
+            # from the day it was first imported until 2026-10-26. The group is
+            # a second call, and it has to come after the rules, because the
+            # group does not exist until one of them is in it.
+            if not group.get("interval"):
+                continue
+            want = seconds(group["interval"])
+            path = "/api/v1/provisioning/folder/%s/rule-groups/%s" % (uid, group["name"])
+            st, body = call(url, token, path)
+            if st != 200:
+                # On a dry run the group legitimately may not exist yet.
+                if not args.dry_run:
+                    print("  %-46s FAIL read group %r (%s)" % (name, group["name"], st))
+                    rc = 1
+                continue
+            had = body.get("interval")
+            if had == want:
+                continue
+            if args.dry_run:
+                print("  %-46s would set group %r interval %ss -> %ss"
+                      % (name, group["name"], had, want))
+                continue
+            body["interval"] = want
+            st, resp = call(url, token, path, "PUT", body)
+            ok = st in (200, 201, 202)
+            print("  %-46s %s group %r interval %ss -> %ss (%s)"
+                  % (name, "OK " if ok else "FAIL", group["name"], had, want, st))
+            if not ok:
+                print("      %s" % resp)
+                rc = 1
     return rc
 
 
