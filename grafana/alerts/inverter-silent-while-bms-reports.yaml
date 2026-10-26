@@ -58,11 +58,16 @@ groups:
           severity: warning
           system: solar
         # Without this the rule falls through the notification policy tree,
-        # which has no routes, to the default receiver -- still Grafana's stock
-        # <example@email.com> -- and notifies nobody. The snake_case key is
-        # Grafana's own inconsistency: every other key in this file is camelCase.
+        # which has no routes, to the default receiver, and notifies whatever
+        # that happens to be. The snake_case key is Grafana's own
+        # inconsistency: every other key in this file is camelCase.
+        #
+        # tr-node8-solar-remediation carries two integrations, an email and the
+        # webhook, so this one receiver both tells someone and kicks off
+        # remediation. It took the webhook over from the retired
+        # "Inverter Data Polling Issues" rule on 2026-10-26 -- see ../README.md.
         notification_settings:
-          receiver: JM Email
+          receiver: tr-node8-solar-remediation
         data:
           - refId: A
             relativeTimeRange:

@@ -64,20 +64,29 @@ format, tracked for the same reason the dashboard is.
 | Rule | Fires when | Notifies |
 | --- | --- | --- |
 | [`battery-cell-overvoltage.yaml`](alerts/battery-cell-overvoltage.yaml) | any cell reaches 3.60 V, below the BMS cut-off at 3.65 V | JM Email |
-| [`inverter-silent-while-bms-reports.yaml`](alerts/inverter-silent-while-bms-reports.yaml) | no inverter samples for ten minutes while the battery reader keeps writing | JM Email |
+| [`inverter-silent-while-bms-reports.yaml`](alerts/inverter-silent-while-bms-reports.yaml) | no inverter samples for ten minutes while the battery reader keeps writing | `tr-node8-solar-remediation` (email + webhook) |
 | [`bms-silent-while-inverter-reports.yaml`](alerts/bms-silent-while-inverter-reports.yaml) | no battery samples for ten minutes while the inverter reader keeps writing | JM Email |
 | [`kplc-voltage.yaml`](alerts/kplc-voltage.yaml) | the last `gridVoltage` reading in twelve hours is below 220 V | JM Email |
-| [`inverter-data-polling-issues.yaml`](alerts/inverter-data-polling-issues.yaml) | the last `bat_volts` reading in six hours is below 20 V | `tr-node8-solar-remediation` webhook |
 
-The last two were built from the dashboard long before the others and were live
-but untracked until 2026-10-26, so both this table and this directory claimed
-less than was actually running. They are exported as found.
+`kplc-voltage.yaml` was built from the dashboard long before the others and was
+live but untracked until 2026-10-26, so both this table and this directory
+claimed less than was actually running. It is exported as found.
 
-`inverter-data-polling-issues.yaml` overlaps
-`inverter-silent-while-bms-reports.yaml` and tests the same failure less
-precisely: a battery-voltage floor cannot separate a dead inverter link from a
-genuinely flat battery, nor the inverter stopping from the host stopping.
-Whether it should now be retired is open.
+**Retired: "Inverter Data Polling Issues".** A sixth rule, uid
+`dfmmrqxh77bb4e`, watched the same failure as
+`inverter-silent-while-bms-reports.yaml` but tested it with a `bat_volts`
+floor, which cannot separate a dead inverter link from a genuinely flat
+battery, nor the inverter stopping from the host stopping. It was not merely
+redundant, though: it was the only rule driving the
+`tr-node8-solar-remediation` webhook, so deleting it alone would have kept the
+notification and silently dropped the automated remediation.
+
+So the webhook moved first. `tr-node8-solar-remediation` was given a second,
+email integration, `inverter-silent-while-bms-reports.yaml` was pointed at it,
+and only then was the old rule deleted, on 2026-10-26. Its definition is in
+this repo's history rather than lost -- it was tracked one commit before it was
+removed, which is the reason for tracking it at all. One receiver now does both
+jobs, because `notification_settings.receiver` takes a single name.
 
 **In Grafana Cloud, not in the cluster's Alertmanager.** That Alertmanager
 routes everything to the chart's `null` receiver, so a rule there would fire and
