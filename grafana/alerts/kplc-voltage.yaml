@@ -1,0 +1,178 @@
+# KPLC grid voltage.
+#
+# Grafana Cloud alert rule in Grafana's provisioning format. It predates the
+# rules written in this directory and was built from the dashboard, which is
+# why its annotations carry __dashboardUid__/__panelId__ and why its rule
+# group is named "1m" after its evaluation interval rather than after what it
+# watches.
+#
+# Exported here on 2026-10-26. It was live and untracked until then, so
+# ../README.md's claim that this directory is what is running was not true.
+#
+# Fires when the last gridVoltage reading in a 12-hour window is below 220 V.
+#
+# It notifies JM Email, and always has -- which is exactly why nobody noticed
+# that the three rules written later carried no receiver at all and were
+# reaching nobody. Alerts were arriving the whole time, just never those.
+#
+# Exported as found, quirks included: refId C is a reduce carrying a vestigial
+# condition block that the UI writes whether or not it is used, and the
+# 12-hour relativeTimeRange is far wider than a 1m evaluation needs. Both are
+# behaviour changes, and belong in their own commit rather than in an export.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: '1m'
+    folder: Power
+    interval: 1m
+    rules:
+      - uid: aegoc4bh9p7nkb
+        title: KPLC Voltage
+        condition: D
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        isPaused: false
+        annotations:
+          __dashboardUid__: RTundaRgz
+          __panelId__: '26'
+          summary: KPLC Outage
+        notification_settings:
+          receiver: JM Email
+        data:
+          - datasourceUid: fdwa5hfyf5o1sa
+            model:
+              adhocFilters: []
+              alias: KPLC Voltage
+              datasource:
+                type: influxdb
+                uid: fdwa5hfyf5o1sa
+              groupBy:
+                - params:
+                    - 1m
+                  type: time
+                - params:
+                    - 'null'
+                  type: fill
+              instant: false
+              intervalMs: 1000
+              limit: ''
+              maxDataPoints: 43200
+              measurement: logs
+              orderByTime: DESC
+              policy: default
+              query: ''
+              range: true
+              rawSql: ''
+              refId: A
+              resultFormat: time_series
+              select:
+                - - params:
+                      - gridVoltage
+                    type: field
+                  - params: []
+                    type: last
+              slimit: ''
+              tags: []
+              tz: ''
+            refId: A
+            relativeTimeRange:
+              from: 43200
+              to: 0
+          - datasourceUid: fdwa5hfyf5o1sa
+            model:
+              adhocFilters: []
+              alias: KPLC Current
+              datasource:
+                type: influxdb
+                uid: fdwa5hfyf5o1sa
+              groupBy:
+                - params:
+                    - 1m
+                  type: time
+                - params:
+                    - 'null'
+                  type: fill
+              instant: false
+              intervalMs: 1000
+              limit: ''
+              maxDataPoints: 43200
+              measurement: logs
+              orderByTime: ASC
+              policy: default
+              query: ''
+              range: true
+              rawSql: ''
+              refId: B
+              resultFormat: time_series
+              select:
+                - - params:
+                      - gridCurrent
+                    type: field
+                  - params: []
+                    type: last
+              slimit: ''
+              tags: []
+              tz: ''
+            refId: B
+            relativeTimeRange:
+              from: 43200
+              to: 0
+          - datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params: []
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              reducer: last
+              refId: C
+              settings:
+                mode: ''
+              type: reduce
+            refId: C
+            relativeTimeRange:
+              from: 0
+              to: 0
+          - datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 220
+                    type: lt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - D
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: C
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: D
+              type: threshold
+            refId: D
+            relativeTimeRange:
+              from: 0
+              to: 0

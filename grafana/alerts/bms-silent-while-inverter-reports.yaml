@@ -1,6 +1,6 @@
 # The battery reader stopped while the inverter reader kept working.
 #
-# The mirror of inverter-silent-while-battery-reports.yaml, and the one that
+# The mirror of inverter-silent-while-bms-reports.yaml, and the one that
 # matters most in practice: every multi-hour gap so far has been this way
 # round, not the other.
 #
@@ -28,7 +28,7 @@ apiVersion: 1
 groups:
   - orgId: 1
     name: solar-bms-liveness
-    folder: Solar
+    folder: Power
     interval: 1m
     rules:
       - uid: bms-silent-while-inverter-reports
