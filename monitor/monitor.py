@@ -11,6 +11,7 @@ import os
 import signal
 import sys
 import threading
+from collections import namedtuple
 from datetime import datetime, timezone
 
 from influxdb import InfluxDBClient
@@ -57,6 +58,12 @@ BATTERY_DEVICE = os.environ.get("BATTERY_DEVICE", "")
 SAMPLE_INTERVAL = float(os.environ.get("SAMPLE_INTERVAL", "30"))
 # Reopen the serial port after this many consecutive failed samples.
 RECONNECT_AFTER = int(os.environ.get("RECONNECT_AFTER", "3"))
+# Volts by which the two register blocks' battery readings may disagree before
+# the sample is treated as a bad decode. Across 96h of healthy polling the gap
+# stayed within +1.2/-1.0V and averaged +0.13V, so 2.0 clears the normal spread
+# with room to spare. Tunable only as an escape hatch: if a firmware change
+# shifts the offset, a wrong value here discards every sample.
+BATTERY_VOLTS_DISAGREEMENT = float(os.environ.get("BATTERY_VOLTS_DISAGREEMENT", "2.0"))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 
 log = logging.getLogger("monitor")
@@ -64,6 +71,28 @@ log = logging.getLogger("monitor")
 # Set by the signal handler; also used as an interruptible sleep so that
 # `docker stop` does not have to wait out a full sample interval.
 shutdown = threading.Event()
+
+
+# `kind` names the failing check and never varies; `detail` carries the live
+# numbers. They are separate because the sampling loop suppresses repeated
+# failures by comparing messages, and a message holding this cycle's voltages
+# differs every cycle -- which would defeat the suppression and print a
+# traceback per sample for as long as the fault lasted.
+Problem = namedtuple("Problem", "kind detail")
+
+
+class DecodeError(RuntimeError):
+    """A CRC-valid frame whose contents cannot be the inverter's real state.
+
+    Carries only the set of failing checks as its message, for the reason
+    above; `details` and `sample` hold the numbers, for the single log line
+    that is printed when the fault first appears.
+    """
+
+    def __init__(self, problems, sample):
+        super().__init__(", ".join(sorted({p.kind for p in problems})))
+        self.details = [p.detail for p in problems]
+        self.sample = sample
 
 
 def implausible(sample) -> list:
@@ -76,8 +105,26 @@ def implausible(sample) -> list:
     """
     problems = []
     if sample.output_va > 0 and sample.output_w > sample.output_va * 1.05:
-        problems.append("output_w {0} exceeds output_va {1}".format(
-            sample.output_w, sample.output_va))
+        problems.append(Problem("output_w_over_va",
+                                "output_w {0} exceeds output_va {1}".format(
+                                    sample.output_w, sample.output_va)))
+    # Both blocks report battery voltage -- bat_volts from 25200[5],
+    # pvBattVoltage from 15200[6] -- so each is a free check on the other.
+    # A wide gap means one block was answered with the other's contents. CRC
+    # cannot catch that: the frame is well formed, it just holds the reply to
+    # the previous request. Seen on 2026-10-27 after a mains cut, in both
+    # directions: bat_volts 38.7 against pvBattVoltage 26.6 (PV volts in the
+    # battery slot), and pvBattVoltage 229.2 against a sane bat_volts (grid
+    # volts in the PV slot). The range checks below caught neither -- 38.7 sits
+    # well inside a 0..80 bound -- and 26 such points reached InfluxDB in one
+    # morning, which is all it takes to make a dashboard panel read 600%.
+    gap = abs(sample.bat_volts - sample.pvBattVoltage)
+    if gap > BATTERY_VOLTS_DISAGREEMENT:
+        problems.append(Problem("battery_volts_disagree",
+                                "bat_volts {0} vs pvBattVoltage {1}: the two register "
+                                "blocks disagree by {2:.1f}V, over the {3}V limit".format(
+                                    sample.bat_volts, sample.pvBattVoltage, gap,
+                                    BATTERY_VOLTS_DISAGREEMENT)))
     for name, value, low, high in (
             ("bat_volts", sample.bat_volts, 0, 80),
             ("output_w", sample.output_w, -20000, 20000),
@@ -85,7 +132,8 @@ def implausible(sample) -> list:
             ("load_percent", sample.load_percent, 0, 200),
             ("gridvoltage", sample.gridvoltage, 0, 400)):
         if not low <= value <= high:
-            problems.append("{0}={1} outside {2}..{3}".format(name, value, low, high))
+            problems.append(Problem(name + "_range", "{0}={1} outside {2}..{3}".format(
+                name, value, low, high)))
     return problems
 
 
@@ -313,6 +361,14 @@ def main() -> int:
             sample = inverter.sample() if inverter is not None else None
             if sample is None:
                 raise RuntimeError("inverter unavailable")
+            problems = implausible(sample)
+            if problems:
+                # A sample that contradicts itself is a failed read, not a
+                # reading. Raising sends it through the machinery below, so
+                # the reconnect, the BMS-only write and the inverter-silence
+                # alert all see it -- which is right, because either way no
+                # usable inverter data is reaching the database.
+                raise DecodeError(problems, sample)
         except Exception as exc:
             consecutive_failures += 1
             # The adapter is powered from the inverter, so an inverter outage
@@ -322,7 +378,16 @@ def main() -> int:
             # the traceback only when the failure changes.
             signature = "{0}: {1}".format(type(exc).__name__, exc)
             if signature != last_failure:
-                log.exception("sample failed (%d consecutive)", consecutive_failures)
+                if isinstance(exc, DecodeError):
+                    # No traceback: the stack is just this loop, and what
+                    # matters is the sample that failed the checks.
+                    log.warning("discarding samples, the decode contradicts "
+                                "itself (%d consecutive)", consecutive_failures)
+                    for detail in exc.details:
+                        log.warning("  %s", detail)
+                    log.warning("  sample: %s", exc.sample)
+                else:
+                    log.exception("sample failed (%d consecutive)", consecutive_failures)
                 last_failure = signature
             else:
                 log.warning("sample failed (%d consecutive, unchanged): %s",
@@ -348,8 +413,6 @@ def main() -> int:
                 log.info("recovered after %d failed samples", consecutive_failures)
             consecutive_failures = 0
             last_failure = None
-            for problem in implausible(sample):
-                log.warning("implausible reading, check the decode: %s", problem)
             log.info("Measured: %s", sample)
             if battery is not None:
                 log.info("Battery: SOC %d%%, %.2fV, %.2fA, cell spread %.3fV",

@@ -60,6 +60,7 @@ must be doubled (`pa$word` → `pa$$word`).
 | `INVERTER_MODEL` | `must-pv1800` | Must be a key of `SUPPORTED_INVERTERS` |
 | `SAMPLE_INTERVAL` | `30` | Seconds between samples |
 | `RECONNECT_AFTER` | `3` | Consecutive failures before reopening the port |
+| `BATTERY_VOLTS_DISAGREEMENT` | `2.0` | Volts the two register blocks' battery readings may differ by before the sample is discarded |
 | `INTER_READ_DELAY` | `3` | Seconds between the two register block reads |
 | `MODBUS_SLAVE_ID` | `4` | Only change if `probe.py --scan` finds another |
 | `MODBUS_BAUD_RATE` | `19200` | Same |
@@ -84,6 +85,14 @@ Register reads retry before giving up, and after `RECONNECT_AFTER` consecutive
 failed samples the serial port is closed and reopened — a USB re-enumeration
 would otherwise leave the daemon wedged on a dead file descriptor forever.
 An InfluxDB outage is logged and the sample dropped; it does not stop polling.
+
+A sample that contradicts itself is discarded rather than written. Both
+register blocks report battery voltage — `bat_volts` from `25200[5]` and
+`pvBattVoltage` from `15200[6]` — so a gap wider than
+`BATTERY_VOLTS_DISAGREEMENT` means one block was answered with the other's
+contents, which CRC cannot detect because the frame is well formed. Such a
+cycle is counted as a failed read, so the reconnect and the inverter-silence
+alert both see it.
 
 ## Deployment
 
