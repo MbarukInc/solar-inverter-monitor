@@ -46,6 +46,8 @@ services:
       BMS_SLAVE_ID: "${BMS_SLAVE_ID:-1}"
       BMS_BAUD_RATE: "${BMS_BAUD_RATE:-9600}"
       SAMPLE_INTERVAL: "${SAMPLE_INTERVAL:-30}"
+      # Escape hatch only -- see README. Wrong values discard every sample.
+      BATTERY_VOLTS_DISAGREEMENT: "${BATTERY_VOLTS_DISAGREEMENT:-2.0}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
     # The daemon logs a line per sample. Without rotation that grows without
     # bound on the SD card.
